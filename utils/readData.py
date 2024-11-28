@@ -4,6 +4,9 @@ from torchvision import datasets
 import torchvision.transforms as transforms
 from torch.utils.data.sampler import SubsetRandomSampler
 from utils.cutout import Cutout
+# 全局取消证书验证
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
 
 # set device
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -40,7 +43,7 @@ def read_dataset(batch_size=16,valid_size=0.2,num_workers=0,pic_path='dataset'):
                                 download=True, transform=transform_train)
     valid_data = datasets.CIFAR10(pic_path, train=True,
                                 download=True, transform=transform_test)
-    test_data = datasets.CIFAR10(pic_path, train=False,
+    test_data = datasets.CIFAR10(pic_path, train=True,
                                 download=True, transform=transform_test)
         
 

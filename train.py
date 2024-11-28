@@ -5,12 +5,27 @@ import torch.nn as nn
 import torch.optim as optim
 from utils.readData import read_dataset
 from utils.ResNet import ResNet18
+from torch.utils.tensorboard import SummaryWriter
+import torchvision
 
+SAVE_TB = False
+model_name = 'ResNet18_fp8'
+# QUANT_TYPE can be None, fp8, int8, int4
+QUANT_TYPE = 'fp8'
+RELOAD_CHECKPOINT = True
+PATH_TO_PTH_CHECKPOINT = f'checkpoint/{model_name}.pt'
 # set device
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print(f"\n=========================== run on {device} ===========================")
+# ======================================== #
+# 实例化SummaryWriter对象
+# ======================================== #
+print('Start Tensorboard with "tensorboard --logdir=runs", view at http://localhost:6006/')
+tb_writer = SummaryWriter(log_dir='/'.join(["output","tensorboard", model_name]))
 # 读数据
 batch_size = 128
-train_loader,valid_loader,test_loader = read_dataset(batch_size=batch_size,pic_path='dataset')
+print(f"        ...... batch size is {batch_size}, loading data ......")
+train_loader,valid_loader,test_loader = read_dataset(batch_size=batch_size,pic_path='/home/project/Resnet18/dataset/')
 # 加载模型(使用预处理模型，修改最后一层，固定之前的权重)
 n_class = 10
 model = ResNet18()
@@ -24,9 +39,12 @@ model.fc = torch.nn.Linear(512, n_class) # 将最后的全连接层改掉
 model = model.to(device)
 # 使用交叉熵损失函数
 criterion = nn.CrossEntropyLoss().to(device)
+if RELOAD_CHECKPOINT:
+    print('\n Reloading checkpoint - pretrained model stored at: {} \n'.format(PATH_TO_PTH_CHECKPOINT))
+    model.load_state_dict(torch.load(PATH_TO_PTH_CHECKPOINT, map_location=device))
 
 # 开始训练
-n_epochs = 250
+n_epochs = 100
 valid_loss_min = np.Inf # track change in validation loss
 accuracy = []
 lr = 0.1
@@ -55,7 +73,8 @@ for epoch in tqdm(range(1, n_epochs+1)):
         optimizer.zero_grad()
         # forward pass: compute predicted outputs by passing inputs to the model
         # (正向传递：通过向模型传递输入来计算预测输出)
-        output = model(data).to(device)  #（等价于output = model.forward(data).to(device) ）
+        output = model(data)[0].to(device)
+        a = model(data)[1] #（等价于output = model.forward(data).to(device) ）
         # calculate the batch loss（计算损失值）
         loss = criterion(output, target)
         # backward pass: compute gradient of the loss with respect to model parameters
@@ -76,7 +95,8 @@ for epoch in tqdm(range(1, n_epochs+1)):
         data = data.to(device)
         target = target.to(device)
         # forward pass: compute predicted outputs by passing inputs to the model
-        output = model(data).to(device)
+        output = model(data)[0].to(device)
+
         # calculate the batch loss
         loss = criterion(output, target)
         # update average validation loss 
@@ -104,8 +124,68 @@ for epoch in tqdm(range(1, n_epochs+1)):
     # 如果验证集损失函数减少，就保存模型。
     if valid_loss <= valid_loss_min:
         print('Validation loss decreased ({:.6f} --> {:.6f}).  Saving model ...'.format(valid_loss_min,valid_loss))
-        torch.save(model.state_dict(), 'checkpoint/resnet18_cifar10.pt')
+        torch.save(model.state_dict(), f'checkpoint/{model_name}.pt')
         valid_loss_min = valid_loss
         counter = 0
     else:
         counter += 1
+    def flatten_dict(d, parent_key='', sep='_'):
+        items = []
+        for k, v in d.items():
+            new_key = parent_key + sep + k if parent_key else k
+            if isinstance(v, dict):
+                items.extend(flatten_dict(v, new_key, sep=sep).items())
+            else:
+                items.append((new_key, v))
+        return dict(items)
+    a_b = a
+    a = flatten_dict(a_b)
+    tags = ["train_loss", "val_loss", "Accuracy"]
+    if SAVE_TB is True:
+        tb_writer.add_scalar(tags[0], train_loss, epoch)
+        tb_writer.add_scalar(tags[1], valid_loss, epoch)
+        tb_writer.add_scalar(tags[2], accuracy[-1], epoch)
+
+        weights_keys = model.state_dict().keys()
+        for key in weights_keys:
+            weight_t = model.state_dict()[key].cpu()
+            tb_writer.add_histogram(tag=key, values=weight_t, global_step=epoch)
+            if weight_t.dim() == 4:
+                c_out, c_in, k_w, k_h = weight_t.shape
+                for o_idx in range(c_out):
+                    kernel_idx = weight_t[o_idx, :, :, :].unsqueeze(1)
+                    kernel_grid = torchvision.utils.make_grid(kernel_idx, nrow=8, normalize=True, scale_each=True)
+                    tb_writer.add_image(f'{key}_split_cin', kernel_grid, global_step=o_idx)
+            elif weight_t.dim() == 2:
+                weight_t = weight_t.unsqueeze(0)
+                tb_writer.add_image(f'{key}_split_cin', weight_t)
+            elif weight_t.dim() == 1:
+                weight_t = weight_t.unsqueeze(0)
+                weight_t = weight_t.unsqueeze(0)
+                tb_writer.add_image(f'{key}_split_cin', weight_t)
+            # kernel_all = weight_t.view(-1,c_in,k_h, k_w)
+            # kernel_grid = torchvision.utils.make_grid(kernel_all, nrow=8, normalize=False, scale_each= False)
+            # tb_writer.add_image(f'{key}_all', kernel_grid)
+
+        for key in a:
+            # im = np.squeeze(a[key].cpu().detach().numpy())
+            im = a[key].cpu().detach()
+
+            # [C, H, W] -> [H, W, C]
+            # im = np.transpose(im, [1, 2, 0])
+            tb_writer.add_histogram(tag=key,
+                                    values=im,
+                                    global_step=epoch)
+            if im.dim() == 4:
+                c_out, c_in, k_w, k_h = im.shape
+                for o_idx in range(c_out):
+                    im_idx = im[o_idx, :, :, :].unsqueeze(1)
+                    im_grid = torchvision.utils.make_grid(im_idx, nrow=8, normalize=True, scale_each=True)
+                    tb_writer.add_image(f'{key}_split_cin', im_grid, global_step=o_idx)
+            elif im.dim() == 2:
+                im = im.unsqueeze(0)
+                tb_writer.add_image(f'{key}_split_cin', im)
+            elif im.dim() == 1:
+                im = im.unsqueeze(0)
+                im = im.unsqueeze(0)
+                tb_writer.add_image(f'{key}_split_cin', im)
