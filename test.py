@@ -14,7 +14,7 @@ import time
 
 # 设置日志
 def main():
-    model_name = f"ResNet18_fp32"
+    model_name = f"ResNet18_wo_bn_w_sym_loss"
     # Where to save the generated visualizations
     if fp_on == 0:
         PATH_TO_SAVED = os.path.join(
@@ -90,8 +90,8 @@ if __name__ == '__main__':
     fp_on = 2  # 0:off 1:wo hw 2:hw
     quant_type = "group"  # "layer" "channel" "group"
     group_number = 1
-    group_number_list = [1, 9, 18, 36, 72, 144, 288, 576]
-    left_shift_bit = 3
+    group_number_list = [9, 18, 36, 72, 144, 288, 576]
+    left_shift_bit = 0
     isint = 0
     qn_on = 0
     img_quant_flag = qn_on

@@ -18,10 +18,10 @@ import matplotlib.pyplot as plt  # Import matplotlib
 img_quant_flag = 0
 isint = 0
 qn_on = 0
-fp_on = 0 #0:off 1:wo hw 2:hw
+fp_on = 2 #0:off 1:wo hw 2:hw
 quant_type = "group" #"layer" "channel" "group"
 group_number = 16
-left_shift_bit = 0
+left_shift_bit = 3
 
 SAVE_TB = False
 
@@ -40,11 +40,12 @@ n_class = 10
 # 开始训练
 n_epochs = 100
 RELOAD_CHECKPOINT = 0
-PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp8_wo_bn.pt'
+PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_wo_bn_w_sym_loss.pt'
 # PATH_TO_PTH_CHECKPOINT = f'checkpoint/{model_name}.pt'
 
 def main():
-    model_name = "ResNet18_wo_bn_w_sym_loss"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    model_name = f"ResNet18_wo_bn_w_sym_loss{group_number}"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    print(f"current model name is {model_name}")
     valid_loss_min = np.Inf # track change in validation loss
     accuracy = []
     lr = 0.001
@@ -155,7 +156,7 @@ def main():
             # 计算对称性损失
             sym_loss = symmetry_loss_model(model)
             # 总损失
-            total_loss = loss + 0.00001 * sym_loss  # 0.01 是对称性损失的权重系数
+            total_loss = loss + 0.001 * sym_loss  # 0.01 是对称性损失的权重系数
             # backward pass: compute gradient of the loss with respect to model parameters
             # （反向传递：计算损失相对于模型参数的梯度）
             total_loss.backward()
@@ -302,6 +303,6 @@ def main():
     plt.show()
 
 if __name__ == '__main__':
-    # for group_number in [1,9,18,36,72,144,288,576]:#1,9,
-    #     print(f'==================== group_number is {group_number} ====================')
-    main()
+    for group_number in [9,18,36,72,144,288,576]:#1,9,
+        print(f'==================== group_number is {group_number} ====================')
+        main()

@@ -1064,7 +1064,7 @@ class Weight_fp_hw(torch.autograd.Function):
                 padding_shape = list(weight_n_scale.shape)
                 padding_shape[0] = padding_size  # 只在最后一个维度上添加
                 padding = torch.zeros(padding_shape, device=weight_n_scale.device, dtype=weight_n_scale.dtype)
-                weight_n = torch.cat((weight_n_scale, padding))
+                weight_n_scale = torch.cat((weight_n_scale, padding))
             weight_reshape = weight_n_scale.reshape([-1, group_number])
             weight_align, sign, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
         else:
@@ -1101,7 +1101,8 @@ class Weight_fp_hw(torch.autograd.Function):
         wmr= weight[i, j, k, l]
         # 计算平均误差百分比
         mean_error_percentage = torch.mean(error_percentage).item()
-
+        wmax = weight.max()
+        wmin = weight.min()
         max_count = torch.sum(error_percentage == error_percentage_max)
         # 计算总元素个数
         total_elements = error_percentage.numel()
@@ -1132,7 +1133,7 @@ class Feature_fp_hw(torch.autograd.Function):
 
         feature_n = fp8_downcast(feature_scale, n_bits)
         co, ci, kx, ky = feature_n.shape
-        real_gn = min(group_number, co*ci*kx*ky)
+        total_elements = co * ci * kx * ky
         if quant_type == 'channel':
             feature_reshape = feature_n.reshape([co,-1])
             feature_align, sign, e_max, m_sft = fp8_alignment(feature_reshape, left_shift_bit=left_shift_bit)
@@ -1140,11 +1141,40 @@ class Feature_fp_hw(torch.autograd.Function):
             feature_reshape = feature_n.reshape([1,-1])
             feature_align, sign, e_max, m_sft = fp8_alignment(feature_reshape, left_shift_bit=left_shift_bit)
         elif quant_type == 'group':
-            feature_reshape = feature_n.reshape([-1, real_gn])
+            # 计算需要的填充数量
+
+            remainder = total_elements % group_number
+            if remainder != 0:
+                padding_size = group_number - remainder
+            else:
+                padding_size = 0
+            # 用零填充张量
+            if padding_size > 0:
+                # 创建一个与 weight_n 具有相同维度的 padding
+                feature_n = feature_n.reshape([-1, 1])
+                padding_shape = list(feature_n.shape)
+                padding_shape[0] = padding_size  # 只在最后一个维度上添加
+                padding = torch.zeros(padding_shape, device=feature_n.device, dtype=feature_n.dtype)
+                feature_n = torch.cat((feature_n, padding))
+            feature_reshape = feature_n.reshape([-1, group_number])
             feature_align, sign, e_max, m_sft = fp8_alignment(feature_reshape, left_shift_bit)
         else:
             feature_reshape = feature_n.reshape([-1, 1])
             feature_align, sign, e_max, m_sft = fp8_alignment(feature_reshape, 0)
+        # feature_align = feature_align.reshape([-1, 1])
+        # e_max = e_max.reshape([-1, 1])
+        # m_sft = m_sft.reshape([-1, 1])
+        # sign = sign.reshape([-1, 1])
+        #
+        # feature_align = feature_align[:total_elements,:]
+        # e_max = e_max[:total_elements, :]
+        # m_sft = m_sft[:total_elements, :]
+        # sign = sign[:total_elements, :]
+
+        # feature_align = feature_align.reshape([-1, ci, kx, ky])
+        # e_max = e_max.reshape([-1, ci, kx, ky])
+        # m_sft = m_sft.reshape([-1, ci, kx, ky])
+        # sign = sign.reshape([-1, ci, kx, ky])
         feature_align = feature_align.reshape([co, ci, kx, ky])
         e_max = e_max.reshape([co, ci, kx, ky])
         m_sft = m_sft.reshape([co, ci, kx, ky])
@@ -1282,15 +1312,52 @@ class Conv2d_fp8_hw(nn.Conv2d):
         self.left_shift_bit = left_shift_bit
 
     def forward(self, x):
+        # weight_n_t = Weight_fp.apply(self.weight, self.n_bits)
+        # if torch.isnan(weight_n_t).any():
+        #     print("Nan in weight")
+        # x_old_t = x
+        # x_t = self._conv_forward(x_old_t, weight_n_t, self.bias)
+        # x_for_t = x_t
+        # x_t = Feature_fp.apply(x_t, self.n_bits)
+        # if torch.isnan(x_t).any():
+        #     print("Nan in feature")
+
         weight_n = Weight_fp_hw.apply(self.weight, self.n_bits, self.quant_type, self.group_number, self.left_shift_bit)
-        # x_init = x
+        x_init = x
         # x = Feature_fp_hw.apply(x, self.n_bits, self.quant_type, self.group_number)
         if torch.isnan(weight_n).any():
             print("Nan in weight")
         x = self._conv_forward(x, weight_n, self.bias)
-        x = Feature_fp_hw.apply(x, self.n_bits, "none", self.group_number, self.left_shift_bit)
+        x = Feature_fp_hw.apply(x, self.n_bits, "none", 1, self.left_shift_bit)
         if torch.isnan(x).any():
             print("Nan in feature")
+
+        # if not torch.equal(weight_n_t, weight_n):
+        #     # 找到不相等的元素
+        #     unequal_elements = torch.ne(weight_n_t, weight_n)
+        #
+        #     # 获取不相等元素的位置
+        #     unequal_positions = unequal_elements.nonzero(as_tuple=True)
+        #
+        #     # 获取不相等元素的个数
+        #     num_unequal_elements = unequal_elements.sum().item()
+        #
+        #     print(f"Number of unequal elements: {num_unequal_elements}")
+        #     print(f"Positions of unequal elements: {unequal_positions}")
+        #
+        # if not torch.equal(x_t,x):
+        #     # 找到不相等的元素
+        #     unequal_elements = torch.ne(x_t, x)
+        #
+        #     # 获取不相等元素的位置
+        #     unequal_positions = unequal_elements.nonzero(as_tuple=True)
+        #
+        #     # 获取不相等元素的个数
+        #     num_unequal_elements = unequal_elements.sum().item()
+        #
+        #     print(f"Number of unequal elements: {num_unequal_elements}")
+        #     print(f"Positions of unequal elements: {unequal_positions}")
+
         return x
 
 
