@@ -714,8 +714,43 @@ def fp8_downcast(source_tensor, n_bits: int):
     fp8_as_uint8 = fp8_as_uint8 * mask*mask_b*maskc
     return fp8_as_uint8 #+ ones * mask*mask_b
 
+# def uint8_to_fp32(source_tensor: torch.ShortTensor, n_bits: int, left_shift_bit: int):
+#     """Converts a uint8 tensor to a fp16 tensor
+#
+#     Args:
+#         source_tensor (torch.ByteTensor): The tensor to convert
+#         n_bits (int): The number of bits to use for the mantissa
+#
+#     Returns:
+#         _type_: The converted tensor
+#     """
+#     if source_tensor.dtype != torch.uint8:
+#         source_tensor = source_tensor.clip(0, 2**(8+n_bits))
+#     source_tensor = source_tensor.clone().detach().to(torch.int16)
+#     mask = torch.where(source_tensor == 0, 0, 1)
+#
+#     source_m_nbits = n_bits
+#     source_e_nbits = 7 - n_bits
+#
+#     # Extract sign as int16
+#     sign = shift_right(source_tensor, 7 + left_shift_bit)
+#     # shifted_sign = shift_left(sign.type(torch.int16), 15)
+#     m_8bit = source_tensor % (1<< (n_bits+left_shift_bit))
+#     & 0b00000111
+#     # Extract base as int16 and adjust the bias accordingly
+#     base_mantissa = shift_left(source_tensor, 1 + 24 - left_shift_bit)
+#     base = shift_right(base_mantissa, source_m_nbits + 1 + 24 - left_shift_bit) - shift_base(source_e_nbits)
+#     base = base.type(torch.int16) + shift_base(5)
+#     shifted_base = shift_left(base, 10)
+#
+#     # Extract mantissa as int16
+#     mantissa = shift_left(base_mantissa, source_e_nbits)
+#     shifted_mantissa = shift_left(mantissa.type(torch.int16), 2)
+#     recover_m = shifted_mantissa.view(torch.float16).float() / (1<<left_shift_bit)
+#     out = mask*(shifted_base.view(torch.float16).float() + shifted_sign.view(torch.float16).float() + recover_m)
+#     return out
 
-def uint8_to_fp32(source_tensor: torch.ByteTensor, n_bits: int):
+def uint8_to_fp32(source_tensor: torch.ShortTensor, sign=None, e_max=None, m_sft=None, n_bits: int=3, left_shift_bit: int=0):
     """Converts a uint8 tensor to a fp16 tensor
 
     Args:
@@ -725,29 +760,123 @@ def uint8_to_fp32(source_tensor: torch.ByteTensor, n_bits: int):
     Returns:
         _type_: The converted tensor
     """
-    if source_tensor.dtype != torch.uint8:
-        source_tensor = source_tensor.clip(-480, 480)
-    source_tensor = source_tensor.clone().detach().to(torch.uint8)
+    source_tensor = source_tensor.clone().detach().to(torch.int16)
     mask = torch.where(source_tensor == 0, 0, 1)
 
-    source_m_nbits = n_bits
-    source_e_nbits = 7 - n_bits
-
-    # Extract sign as int16
-    sign = shift_right(source_tensor, 7)
-    shifted_sign = shift_left(sign.type(torch.int16), 15)
-
-    # Extract base as int16 and adjust the bias accordingly
-    base_mantissa = shift_left(source_tensor, 1)
-    base = shift_right(base_mantissa, source_m_nbits + 1) - shift_base(source_e_nbits)
-    base = base.type(torch.int16) + shift_base(5)
-    shifted_base = shift_left(base, 10)
-
-    # Extract mantissa as int16
-    mantissa = shift_left(base_mantissa, source_e_nbits)
-    shifted_mantissa = shift_left(mantissa.type(torch.int16), 2)
-    out = mask*(shifted_base + shifted_sign + shifted_mantissa).view(torch.float16).float()
+    if sign is None or e_max is None or m_sft is None:
+        if left_shift_bit==3:
+            sign = (source_tensor & 0b0000_0100_0000_0000)>>10
+            # shifted_sign = shift_left(sign.type(torch.int16), 15)
+            m_8bit = source_tensor % (1<< (n_bits+left_shift_bit))
+            m_8bit = (source_tensor & 0b0000_0000_0011_1111)
+            e_4bit = (source_tensor & 0b0000_0011_1100_0000)>>6
+        else:
+            sign = (source_tensor & 0b0000_0000_1000_0000)>>7
+            # shifted_sign = shift_left(sign.type(torch.int16), 15)
+            m_8bit = source_tensor % (1 << (n_bits + left_shift_bit))
+            m_8bit = (source_tensor & 0b0000_0000_0000_0111)
+            e_4bit = (source_tensor & 0b0000_0000_0111_1000)>>3
+    else:
+        e_4bit = e_max
+        m_8bit = m_sft
+    m_float = (m_8bit.float() / (1<< (n_bits+left_shift_bit))+1)
+    e_float = (2 ** (e_4bit-7)).float()
+    out = (-1)**sign*e_float*m_float*mask
     return out
+
+def fp8_alignment(ifm_uint8, left_shift_bit=3):
+    device = ifm_uint8.device  # 获取输入张量的设备
+    mask = torch.where(ifm_uint8 == 0, 0, 1).to(device)
+    # 最高位和低3位
+    # m = (torch.ones(ifm_uint8.shape, dtype=torch.uint8, device=device) & 0b00000001) << 3 | (ifm_uint8 & 0b00000111)
+    m = ifm_uint8 & 0b00000111
+    m = m * mask
+
+    s = (ifm_uint8 & 0b10000000) >> 7
+    # 低4~7位
+    e = (ifm_uint8 & 0b01111000) >> 3
+    # 每行的最大值
+    pre_macro_data_e_max, _ = torch.max(e, dim=1)
+    e_delta = pre_macro_data_e_max.unsqueeze(1) - e
+    m_shifted = (m << left_shift_bit) >> e_delta
+    m_shifted_signed = (-1)**s * m_shifted
+    result = (s << (7+left_shift_bit)) + (pre_macro_data_e_max.unsqueeze(1) << (3+left_shift_bit)) + m_shifted
+    e_max = e + e_delta
+    return result, s, e_max, m_shifted
+
+# 示例用法
+# ifm_uint8 = torch.tensor([[1, 2, 3], [4, 5, 6]], dtype=torch.uint8)
+# result = fp8_alignment(ifm_uint8)
+# print(result)
+
+# a = torch.tensor([[-0.0397, -0.0279,  0.0117], [-0.0397, -0.0279,  0.0117]])
+# b = fp8_downcast(a, 3)
+# c = fp8_alignment(b, 0)
+# d = uint8_to_fp32(c, 3)
+
+def fp8_add(floatA, floatB):
+    exponentA = (floatA & 0b01111000)>>3
+    exponentB = (floatB & 0b01111000)>>3
+    fractionA = (floatA & 0b00000111) + 8
+    fractionB = (floatB & 0b00000111) + 8
+    exponent = exponentA
+    if floatA == 0 or floatA == 128:
+        sum = floatB
+    elif floatB == 0 or floatB == 128:
+        sum = floatA
+    elif ((floatA & 0b01111111) == (floatB & 0b01111111)) and ((floatA & 0b10000000) != (floatB & 0b10000000)):
+        sum = 0
+    else:
+        if exponentB > exponentA:
+            shiftAmount = exponentB - exponentA
+            fractionA = (fractionA >> (shiftAmount))
+            exponent = exponentB
+        elif exponentA > exponentB:
+            shiftAmount = exponentA - exponentB
+            fractionB = (fractionB >> (shiftAmount))
+            exponent = exponentA
+
+        if (floatA & 0b10000000) == (floatB & 0b10000000):
+            fraction = fractionA + fractionB
+            if fraction >= 2**4:
+                fraction = fraction >> 1
+                exponent = exponent + 1
+            sign = floatA & 0b10000000
+        else:
+            if floatA & 0b10000000:
+                fraction = fractionB - fractionA
+            else:
+                fraction = fractionA - fractionB
+
+            sign = (fraction<0)*128
+            if sign:
+                fraction =(-fraction)
+
+        if fraction & 0b00001000 == 0:
+            if fraction & 0b00000100:
+                fraction = (fraction << 1)
+                exponent = exponent - 1
+            elif fraction & 0b00000010:
+                fraction = (fraction << 2)
+                exponent = exponent - 2
+            elif fraction & 0b00000001:
+                fraction = (fraction << 3)
+                exponent = exponent - 3
+
+        mantissa = fraction & 0b00000111
+        if (exponent < 0):
+            sum = 0
+        elif (exponent >= 16):
+            sum = sign + 127
+        elif (((exponent & 0b00001111) + mantissa)==0):
+            sum = 0
+        else:
+            sum = sign + ((exponent & 0b00001111)<<3) + mantissa
+    if sum == 128:
+        sum = 0
+    return sum
+
+    # t = np.array([[-32,1],[-1,32]])
 
 class Weight_fp(torch.autograd.Function):
     # Number of inputs (excluding ctx, only weight, bias, half_level, isint, clamp_std, noise_scale)
@@ -756,9 +885,13 @@ class Weight_fp(torch.autograd.Function):
     @staticmethod
     def forward(ctx, weight, n_bits):
         ctx.save_for_backward()
-
-        weight_n = fp8_downcast(weight, n_bits)
-        weight_n = uint8_to_fp32(weight_n, n_bits)
+        # 首先计算scale_factor
+        weight_max = torch.max(torch.abs(weight))
+        scaling_factor = weight_max/448
+        weight_scale = weight / scaling_factor
+        weight_n_scale = fp8_downcast(weight_scale, n_bits)
+        weight_n_scale = uint8_to_fp32(weight_n_scale, n_bits=n_bits, left_shift_bit=0)
+        weight_n = weight_n_scale * scaling_factor
 
         return weight_n
 
@@ -773,14 +906,318 @@ class Feature_fp(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, feature, n_bits):
-        # feature_q, _ = data_quantization_sym(feature, half_level, scale = None, isint = isint, clamp_std = 0)
-        feature_q = fp8_downcast(feature, n_bits)
-        feature_q = uint8_to_fp32(feature_q, n_bits)
-        return feature_q
+        ctx.save_for_backward()
+      # 首先计算scale_factor
+        feature_max = torch.max(torch.abs(feature))
+        scaling_factor = feature_max / 448
+        feature_scale = feature / scaling_factor
+
+        feature_n_scale = fp8_downcast(feature_scale, n_bits)
+        feature_n_scale = uint8_to_fp32(feature_n_scale, n_bits=n_bits, left_shift_bit=0)
+        feature_n = feature_n_scale * scaling_factor
+
+        return feature_n
+
 
     @staticmethod
     def backward(ctx, feature_grad):
         return feature_grad, None, None, None
+
+
+
+DBG = 0
+
+# class Weight_fp_hw(torch.autograd.Function):
+#     # Number of inputs (excluding ctx, only weight, bias, half_level, isint, clamp_std, noise_scale)
+#     # for forward need to be the same as the number of return in def backward()
+#     # (return weight_grad, bias_grad, None, None, None, None)
+#     @staticmethod
+#     def forward(ctx, weight, n_bits, quant_type, group_number,left_shift_bit=0):
+#         # quant type can be none, layer, channel, group
+#         ctx.save_for_backward()
+#         #对称量化
+#         # weight_max = torch.max(torch.abs(weight))
+#         # scaling_factor = weight_max/448
+#         # weight_scale = weight / scaling_factor
+#
+#
+#         #非对称量化
+#         weight_max = torch.max(weight)
+#         weight_min = torch.min(weight)
+#         scaling_factor = (weight_max-weight_min) / 448/2
+#         weight_temp = (weight - weight_min) / scaling_factor - 448
+#         weight_n_scale = fp8_downcast(weight_temp, n_bits)
+#         if DBG:
+#             print(f"\nweight_max:{weight_max},weight_min:{weight_min},scaling_factor:{scaling_factor},weight_temp.max():{weight_temp.max()},weight_temp.min():{weight_temp.min()}")
+#         co, ci, kx, ky = weight_n_scale.shape
+#         if quant_type == 'channel':
+#             weight_reshape = weight_n_scale.reshape([co,-1])
+#             weight_align, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
+#         elif quant_type == 'layer':
+#             weight_reshape = weight_n_scale.reshape([1,-1])
+#             weight_align, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
+#         elif quant_type == 'group':
+#             # 计算需要的填充数量
+#             total_elements = co * ci * kx * ky
+#             remainder = total_elements % group_number
+#             if remainder != 0:
+#                 padding_size = group_number - remainder
+#             else:
+#                 padding_size = 0
+#             # 用零填充张量
+#             if padding_size > 0:
+#                 # 创建一个与 weight_n 具有相同维度的 padding
+#                 padding_shape = list(weight_n_scale.shape)
+#                 padding_shape[0] = padding_size  # 只在最后一个维度上添加
+#                 padding = torch.zeros(padding_shape, device=weight_n_scale.device, dtype=weight_n_scale.dtype)
+#                 weight_n = torch.cat((weight_n_scale, padding))
+#             weight_reshape = weight_n_scale.reshape([-1, group_number])
+#             weight_align, sign, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
+#         else:
+#             weight_align = weight_n_scale
+#         weight_align = weight_align.reshape([-1, ci, kx, ky])
+#         e_max = e_max.reshape([-1, ci, kx, ky])
+#         m_sft = m_sft.reshape([-1, ci, kx, ky])
+#         sign = sign.reshape([-1, ci, kx, ky])
+#         weight_align = weight_align[:co, :ci, :kx, :ky]
+#         e_max = e_max[:co, :ci, :kx, :ky]
+#         m_sft = m_sft[:co, :ci, :kx, :ky]
+#         sign = sign[:co, :ci, :kx, :ky]
+#         a = weight_temp
+#         weight_align_fp = uint8_to_fp32(weight_align, sign, e_max, m_sft, n_bits, left_shift_bit=left_shift_bit)
+#         weight_align_fp_out = (weight_align_fp +448) * scaling_factor + weight_min
+#         b = weight
+#         if DBG:
+#             # 计算绝对误差
+#             absolute_error = torch.abs(weight_align_fp_out - weight)
+#             # 避免除以零的情况
+#             epsilon = 1e-10
+#             # 计算误差百分比
+#             zero_mask = (weight != 0.0)
+#             error_percentage = (absolute_error / (torch.abs(weight) + epsilon)) * 100 * zero_mask
+#             error_percentage_max = torch.max(error_percentage)
+#             max_index = torch.argmax(error_percentage)
+#             d0, d1, d2, d3 = error_percentage.shape
+#
+#             i = max_index // (d1 * d2 * d3)
+#             j = (max_index % (d1 * d2 * d3)) // (d2 * d3)
+#             k = (max_index % (d2 * d3)) // d3
+#             l = max_index % d3
+#             print(error_percentage[i,j,k,l], weight_align_fp_out[i,j,k,l], weight[i,j,k,l])
+#             # 计算平均误差百分比
+#             mean_error_percentage = torch.mean(error_percentage).item()
+#             # print(f'平均误差百分比-lfs{left_shift_bit}: {mean_error_percentage:.2f}%')
+#             max_count = torch.sum(error_percentage == error_percentage_max)
+#             # 计算总元素个数
+#             total_elements = error_percentage.numel()
+#             # 计算最大值的占比
+#             max_ratio = max_count.float() / total_elements
+#         return weight_align_fp_out
+#
+#     # Use default gradiant to train the network
+#     # Number of inputs (excluding ctx, only weight_grad, bias_grad) for backward need to be the same as the
+#     # number of return in def forward() (return weight, bias)
+#     @staticmethod
+#     def backward(ctx, weight_grad):
+#         return weight_grad, None, None, None, None
+class Weight_fp_hw(torch.autograd.Function):
+    # Number of inputs (excluding ctx, only weight, bias, half_level, isint, clamp_std, noise_scale)
+    # for forward need to be the same as the number of return in def backward()
+    # (return weight_grad, bias_grad, None, None, None, None)
+    @staticmethod
+    def forward(ctx, weight, n_bits, quant_type, group_number,left_shift_bit=0):
+        # quant type can be none, layer, channel, group
+        ctx.save_for_backward()
+        #对称量化
+        weight_max = torch.max(torch.abs(weight))
+        weight_min=0
+        scaling_factor = weight_max/448
+        weight_scale = weight / scaling_factor
+        q_min=0
+        #非对称量化
+        # weight_max = torch.max(weight)
+        # weight_min = torch.min(weight)
+        # scaling_factor = (weight_max-weight_min) / 448/2
+        # weight_scale = (weight - weight_min) / scaling_factor - 448
+        # q_min = -488
+        weight_n_scale = fp8_downcast(weight_scale, n_bits)
+        if DBG:
+            print(f"\nweight_max:{weight_max},weight_min:{weight_min},scaling_factor:{scaling_factor},weight_temp.max():{weight_scale.max()},weight_temp.min():{weight_scale.min()}")
+        co, ci, kx, ky = weight_n_scale.shape
+        if quant_type == 'channel':
+            weight_reshape = weight_n_scale.reshape([co,-1])
+            weight_align, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
+        elif quant_type == 'layer':
+            weight_reshape = weight_n_scale.reshape([1,-1])
+            weight_align, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
+        elif quant_type == 'group':
+            # 计算需要的填充数量
+            total_elements = co * ci * kx * ky
+            remainder = total_elements % group_number
+            if remainder != 0:
+                padding_size = group_number - remainder
+            else:
+                padding_size = 0
+            # 用零填充张量
+            if padding_size > 0:
+                # 创建一个与 weight_n 具有相同维度的 padding
+                padding_shape = list(weight_n_scale.shape)
+                padding_shape[0] = padding_size  # 只在最后一个维度上添加
+                padding = torch.zeros(padding_shape, device=weight_n_scale.device, dtype=weight_n_scale.dtype)
+                weight_n = torch.cat((weight_n_scale, padding))
+            weight_reshape = weight_n_scale.reshape([-1, group_number])
+            weight_align, sign, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
+        else:
+            weight_align = weight_n_scale
+        weight_align = weight_align.reshape([-1, ci, kx, ky])
+        e_max = e_max.reshape([-1, ci, kx, ky])
+        m_sft = m_sft.reshape([-1, ci, kx, ky])
+        sign = sign.reshape([-1, ci, kx, ky])
+        weight_align = weight_align[:co, :ci, :kx, :ky]
+        e_max = e_max[:co, :ci, :kx, :ky]
+        m_sft = m_sft[:co, :ci, :kx, :ky]
+        sign = sign[:co, :ci, :kx, :ky]
+        a = weight_scale
+        weight_align_fp = uint8_to_fp32(weight_align, sign, e_max, m_sft, n_bits, left_shift_bit=left_shift_bit)
+        weight_align_fp_out = (weight_align_fp - q_min) * scaling_factor + weight_min
+        b = weight
+
+        # 计算绝对误差
+        absolute_error = torch.abs(weight_align_fp_out - weight)
+        # 避免除以零的情况
+        epsilon = 1e-10
+        # 计算误差百分比
+        zero_mask = (weight != 0.0)
+        error_percentage = (absolute_error / (torch.abs(weight) + epsilon)) * 100 * zero_mask
+        error_percentage_max = torch.max(error_percentage)
+        max_index = torch.argmax(error_percentage)
+        d0, d1, d2, d3 = error_percentage.shape
+
+        i = max_index // (d1 * d2 * d3)
+        j = (max_index % (d1 * d2 * d3)) // (d2 * d3)
+        k = (max_index % (d2 * d3)) // d3
+        l = max_index % d3
+        wm = weight_align_fp_out[i, j, k, l],
+        wmr= weight[i, j, k, l]
+        # 计算平均误差百分比
+        mean_error_percentage = torch.mean(error_percentage).item()
+
+        max_count = torch.sum(error_percentage == error_percentage_max)
+        # 计算总元素个数
+        total_elements = error_percentage.numel()
+        # 计算最大值的占比
+        max_ratio = max_count.float() / total_elements
+
+
+        if DBG:
+            print(f'平均误差百分比-lfs{left_shift_bit}: {mean_error_percentage:.2f}%')
+            print(error_percentage[i, j, k, l], wm,wmr)
+        return weight_align_fp_out
+
+    # Use default gradiant to train the network
+    # Number of inputs (excluding ctx, only weight_grad, bias_grad) for backward need to be the same as the
+    # number of return in def forward() (return weight, bias)
+    @staticmethod
+    def backward(ctx, weight_grad):
+        return weight_grad, None, None, None, None
+class Feature_fp_hw(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, feature, n_bits, quant_type, group_number,left_shift_bit=3):
+        # quant type can be none, layer, channel, group
+        ctx.save_for_backward()
+        feature_max = torch.max(torch.abs(feature))
+        scaling_factor = feature_max / 448
+        feature_scale = feature / scaling_factor
+
+        feature_n = fp8_downcast(feature_scale, n_bits)
+        co, ci, kx, ky = feature_n.shape
+        real_gn = min(group_number, co*ci*kx*ky)
+        if quant_type == 'channel':
+            feature_reshape = feature_n.reshape([co,-1])
+            feature_align, sign, e_max, m_sft = fp8_alignment(feature_reshape, left_shift_bit=left_shift_bit)
+        elif quant_type == 'layer':
+            feature_reshape = feature_n.reshape([1,-1])
+            feature_align, sign, e_max, m_sft = fp8_alignment(feature_reshape, left_shift_bit=left_shift_bit)
+        elif quant_type == 'group':
+            feature_reshape = feature_n.reshape([-1, real_gn])
+            feature_align, sign, e_max, m_sft = fp8_alignment(feature_reshape, left_shift_bit)
+        else:
+            feature_reshape = feature_n.reshape([-1, 1])
+            feature_align, sign, e_max, m_sft = fp8_alignment(feature_reshape, 0)
+        feature_align = feature_align.reshape([co, ci, kx, ky])
+        e_max = e_max.reshape([co, ci, kx, ky])
+        m_sft = m_sft.reshape([co, ci, kx, ky])
+        sign = sign.reshape([co, ci, kx, ky])
+        feature_align_fp = uint8_to_fp32(feature_align, sign, e_max, m_sft, n_bits, left_shift_bit=left_shift_bit)
+        # print("\n",feature[:,0,0,0])
+        # # print(feature_n)
+        # # print(feature_align)
+        # print(feature_align_fp[:,0,0,0])
+        feature_align_fp_out = feature_align_fp * scaling_factor
+
+        # 计算绝对误差
+        absolute_error = torch.abs(feature_align_fp_out - feature)
+        # 避免除以零的情况
+        epsilon = 1e-10
+        # 计算误差百分比
+        zero_mask = (feature != 0.0)
+        error_percentage = (absolute_error / (torch.abs(feature) + epsilon)) * 100 * zero_mask
+        error_percentage_max = torch.max(error_percentage)
+        max_index = torch.argmax(error_percentage)
+        d0, d1, d2, d3 = error_percentage.shape
+
+        i = max_index // (d1 * d2 * d3)
+        j = (max_index % (d1 * d2 * d3)) // (d2 * d3)
+        k = (max_index % (d2 * d3)) // d3
+        l = max_index % d3
+        # print(error_percentage[i, j, k, l], feature_align_fp_out[i, j, k, l], feature[i, j, k, l])
+        # 计算平均误差百分比
+        mean_error_percentage = torch.mean(error_percentage).item()
+        # print(f'对称平均误差百分比-lfs{left_shift_bit}: {mean_error_percentage:.2f}%')
+        max_count = torch.sum(error_percentage == error_percentage_max)
+        # 计算总元素个数
+        total_elements = error_percentage.numel()
+        # 计算最大值的占比
+        max_ratio = max_count.float() / total_elements
+        return feature_align_fp_out
+
+    @staticmethod
+    def backward(ctx, feature_grad):
+        return feature_grad, None, None, None, None
+
+# for i in range(3):
+#     tensor1 = torch.randn(4, 3, 3, 3)
+#
+#     # tensor1 = torch.tensor([[[[-9.0432e-03,  1.2039e-02, -3.9068e-02],
+#     #       [ 1.5672e-02, -8.7397e-02,  8.9242e-03],
+#     #       [-1.9430e-02,  4.3638e-02, -2.9295e-02]],
+#     #
+#     #      [[ 1.3471e-02,  3.2389e-02, -2.3290e-02],
+#     #       [ 2.7648e-02, -7.7760e-02,  2.0374e-02],
+#     #       [-4.5371e-03,  5.8875e-02, -2.1869e-02]],
+#     #
+#     #      [[ 3.1740e-04,  4.4886e-02, -1.4928e-02],
+#     #       [ 8.7579e-03, -6.2884e-02,  2.9567e-02],
+#     #       [-3.3912e-02,  4.3335e-02, -1.7217e-02]]],
+#     #
+#     #     [[[-4.0797e-02, -6.5671e-02, -3.4777e-02],
+#     #       [-7.7855e-02,  6.3777e-02, -5.5809e-02],
+#     #       [-2.3450e-02, -5.9316e-02,  2.1160e-02]],
+#     #
+#     #      [[-3.8100e-02, -7.5460e-02, -3.3063e-02],
+#     #       [-1.4496e-01, -4.6420e-02, -1.2613e-01],
+#     #       [-9.5986e-02, -2.0046e-01, -7.6887e-02]],
+#     #
+#     #      [[ 7.2325e-02,  4.6303e-02,  4.2261e-02],
+#     #       [ 3.8953e-02,  1.7025e-01,  3.2282e-02],
+#     #       [ 4.4703e-02, -1.1234e-02,  5.3663e-02]]]])
+#     b = Weight_fp_hw.apply(tensor1, 3, "group", 1, 3)
+#     c = Weight_fp_hw.apply(tensor1, 3, "group", 1, 0)
+#     d = Feature_fp_hw.apply(tensor1, 3, "group", 1, 3)
+#     e = Feature_fp_hw.apply(tensor1, 3, "group", 1, 0)
+# print()
+
 class Conv2d_fp8(nn.Conv2d):
     def __init__(self, in_channels,
                  out_channels,
@@ -791,6 +1228,7 @@ class Conv2d_fp8(nn.Conv2d):
                  groups: int = 1,
                  bias=False,
                  n_bits=3,
+
                  ):
         super().__init__(in_channels,
                          out_channels,
@@ -807,8 +1245,100 @@ class Conv2d_fp8(nn.Conv2d):
         weight_n = Weight_fp.apply(self.weight, self.n_bits)
         if torch.isnan(weight_n).any():
             print("Nan in weight")
+        x_old= x
         x = self._conv_forward(x, weight_n, self.bias)
+        x_for = x
         x = Feature_fp.apply(x, self.n_bits)
         if torch.isnan(x).any():
             print("Nan in feature")
         return x
+
+class Conv2d_fp8_hw(nn.Conv2d):
+    def __init__(self, in_channels,
+                 out_channels,
+                 kernel_size,
+                 stride,
+                 padding,
+                 dilation = 1,
+                 groups: int = 1,
+                 bias=False,
+                 n_bits=3,
+                 quant_type = 'None',
+                 group_number = 72,
+                 left_shift_bit=0
+                 ):
+        super().__init__(in_channels,
+                         out_channels,
+                         kernel_size,
+                         stride,
+                         padding,
+                         dilation = 1,
+                         groups = 1,
+                         bias=False,
+                         )
+        self.n_bits = n_bits
+        self.quant_type = quant_type
+        self.group_number = group_number
+        self.left_shift_bit = left_shift_bit
+
+    def forward(self, x):
+        weight_n = Weight_fp_hw.apply(self.weight, self.n_bits, self.quant_type, self.group_number, self.left_shift_bit)
+        # x_init = x
+        # x = Feature_fp_hw.apply(x, self.n_bits, self.quant_type, self.group_number)
+        if torch.isnan(weight_n).any():
+            print("Nan in weight")
+        x = self._conv_forward(x, weight_n, self.bias)
+        x = Feature_fp_hw.apply(x, self.n_bits, "none", self.group_number, self.left_shift_bit)
+        if torch.isnan(x).any():
+            print("Nan in feature")
+        return x
+
+
+# logger_config.py
+import logging
+import sys
+
+class LoggerWriter:
+    def __init__(self, level):
+        self.level = level
+
+    def write(self, message):
+        if message.strip():  # 忽略空行
+            self.level(message.strip())
+
+    def flush(self):
+        pass
+
+def setup_logger(name='FP8Logger', log_file='fp8_alignment.log', level=logging.DEBUG):
+    # 创建logger
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+
+    # 创建控制台处理器
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(level)
+
+    # 创建文件处理器
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(level)
+
+    # 创建格式化器并添加到处理器
+    formatter = logging.Formatter('%(asctime)s - %(message)s')
+    console_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+
+    # 如果没有处理器，添加它们
+    if not logger.handlers:
+        logger.addHandler(console_handler)
+        logger.addHandler(file_handler)
+
+    # 重定向 print 到 logger
+    sys.stdout = LoggerWriter(logger.info)
+
+    return logger
+
+def initialize_weights_fp8e4m3(shape, min_val=-448, max_val=448):
+    scale = (max_val - min_val) / 255
+    weights = torch.rand(shape) * (max_val - min_val) + min_val
+    quantized_weights = torch.round(torch.log2(weights - min_val + 1) / scale) * scale + min_val
+    return quantized_weights

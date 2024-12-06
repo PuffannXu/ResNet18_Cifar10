@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt  # Import matplotlib
 img_quant_flag = 0
 isint = 0
 qn_on = 0
-fp_on = 2 #0:off 1:wo hw 2:hw
+fp_on = 0 #0:off 1:wo hw 2:hw
 quant_type = "group" #"layer" "channel" "group"
 group_number = 16
 left_shift_bit = 0
@@ -40,14 +40,14 @@ n_class = 10
 # 开始训练
 n_epochs = 100
 RELOAD_CHECKPOINT = 0
-PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp8.pt'
+PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp8_wo_bn.pt'
 # PATH_TO_PTH_CHECKPOINT = f'checkpoint/{model_name}.pt'
 
 def main():
-    model_name = "ResNet18_fp8_wo_bn"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    model_name = "ResNet18_wo_bn_w_sym_loss"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
     valid_loss_min = np.Inf # track change in validation loss
     accuracy = []
-    lr = 0.1
+    lr = 0.001
     counter = 0
     # Initialize lists to store losses and accuracies
     train_losses = []
@@ -97,7 +97,16 @@ def main():
     else:
         model.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
     model.fc = torch.nn.Linear(512, n_class) # 将最后的全连接层改掉
-
+    # Initialize weights using fp8e4m3 distribution
+    # with torch.no_grad():
+    #     for name, param in model.named_parameters():
+    #         # param.uniform_(-448, 448)
+    #         torch.nn.init.normal_(param, mean=0, std=1)
+    #         # param.data = my.initialize_weights_fp8e4m3(param.data.shape)
+    #         plt.hist(param.cpu().numpy().flatten(), bins=50)
+    #         plt.title(f"Distribution of {name}")
+    #         plt.show()
+            # break  # 只显示一个参数的分布
     model = model.to(device)
     # 使用交叉熵损失函数
     criterion = nn.CrossEntropyLoss().to(device)
@@ -105,6 +114,18 @@ def main():
         print('\n Reloading checkpoint - pretrained model stored at: {} \n'.format(PATH_TO_PTH_CHECKPOINT))
         model.load_state_dict(torch.load(PATH_TO_PTH_CHECKPOINT, map_location=device))
 
+    # 自定义的对称性损失函数
+    def symmetry_loss(weights):
+        mean_value = torch.mean(weights)
+        return torch.abs(mean_value)
+
+    def symmetry_loss_model(model):
+        loss = 0.0
+        for param in model.parameters():
+            if param.requires_grad:
+                mean = torch.mean(param)
+                loss += torch.abs(mean)
+        return loss
     for epoch in tqdm(range(1, n_epochs+1)):
         # keep track of training and validation loss
         train_loss = 0.0
@@ -131,9 +152,13 @@ def main():
             a = model(data)[1] #（等价于output = model.forward(data).to(device) ）
             # calculate the batch loss（计算损失值）
             loss = criterion(output, target)
+            # 计算对称性损失
+            sym_loss = symmetry_loss_model(model)
+            # 总损失
+            total_loss = loss + 0.00001 * sym_loss  # 0.01 是对称性损失的权重系数
             # backward pass: compute gradient of the loss with respect to model parameters
             # （反向传递：计算损失相对于模型参数的梯度）
-            loss.backward()
+            total_loss.backward()
             # perform a single optimization step (parameter update)
             # 执行单个优化步骤（参数更新）
             optimizer.step()
@@ -250,8 +275,8 @@ def main():
 
 
     # Plotting after training
-    plt.figure(figsize=(10, 5))
-    fig, ax1 = plt.subplot(1, 2, 1)
+    plt.figure(figsize=(15, 5))
+    fig, (ax1,ax3) = plt.subplots(1, 2)
     # Plotting training and validation losses
     ax1.plot(train_losses, label='Training Loss', color='b')
     ax1.plot(valid_losses, label='Validation Loss', color='g')
@@ -262,21 +287,21 @@ def main():
 
     # Creating a second y-axis for the learning rate
     ax2 = ax1.twinx()
-    ax2.plot(lr, label='Learning Rate', color='r')
+    ax2.plot(lrs, label='Learning Rate', color='r')
     ax2.set_ylabel('Learning Rate')
     ax2.legend(loc='upper right')
 
-    plt.subplot(1, 2, 2)
-    plt.plot(accuracies, label='Accuracy')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy')
-    plt.title('Accuracy over Epochs')
+    # plt.subplot(1, 2, 2)
+    ax3.plot(accuracies, label='Accuracy')
+    ax3.set_xlabel('Epoch')
+    ax3.set_ylabel('Accuracy')
+    ax3.set_title('Accuracy over Epochs')
     plt.legend()
 
     plt.tight_layout()
     plt.show()
 
 if __name__ == '__main__':
-    for group_number in [1,9,18,36,72,144,288,576]:#1,9,
-        print(f'==================== group_number is {group_number} ====================')
-        main()
+    # for group_number in [1,9,18,36,72,144,288,576]:#1,9,
+    #     print(f'==================== group_number is {group_number} ====================')
+    main()
