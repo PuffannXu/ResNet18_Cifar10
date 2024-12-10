@@ -75,7 +75,8 @@ def read_dataset(batch_size=16,valid_size=0.2,num_workers=0,pic_path='dataset',d
     pic_path: The path of the pictrues
     """
     transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),  #先四周填充0，在吧图像随机裁剪成32*32
+        # transforms.RandomCrop(224, padding=4),  #先四周填充0，在吧图像随机裁剪成32*32
+        transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),  #图像一半的概率翻转，一半的概率不翻转
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225]), #R,G,B每层的归一化用到的均值和方差
@@ -122,6 +123,28 @@ def read_dataset(batch_size=16,valid_size=0.2,num_workers=0,pic_path='dataset',d
         train_data = TinyImageNetDataset(pic_path, split='train', transform=transform_train)
         valid_data = TinyImageNetDataset(pic_path, split='val', transform=transform_test)
         test_data = TinyImageNetDataset(pic_path, split='test', transform=transform_test)
+        # # obtain training indices that will be used for validation
+        # num_train = len(train_data)
+        # indices = list(range(num_train))
+        # # random indices
+        # np.random.shuffle(indices)
+        # # the ratio of split
+        # split = int(np.floor(valid_size * num_train))
+        # # divide data to radin_data and valid_data
+        # train_idx, valid_idx = indices[split:], indices[:split]
+        #
+        # # define samplers for obtaining training and validation batches
+        # # 无放回地按照给定的索引列表采样样本元素
+        # train_sampler = SubsetRandomSampler(train_idx)
+        # valid_sampler = SubsetRandomSampler(valid_idx)
+        #
+        # # prepare data loaders (combine dataset and sampler)
+        # train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size,
+        #                                            sampler=train_sampler, num_workers=num_workers)
+        # valid_loader = torch.utils.data.DataLoader(valid_data, batch_size=batch_size,
+        #                                            sampler=valid_sampler, num_workers=num_workers)
+        # test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size,
+        #                                           num_workers=num_workers)
         train_loader = torch.utils.data.DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
         valid_loader = torch.utils.data.DataLoader(valid_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
         test_loader = torch.utils.data.DataLoader(test_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)

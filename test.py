@@ -15,7 +15,7 @@ import numpy as np
 
 # 设置日志
 def main():
-    model_name = f"ResNet18_fp8_w_bn_w_sym_loss_min_max"
+    model_name = f"ResNet18_fp32_w_bn_w_sym_loss_imagenet"
     # Where to save the generated visualizations
     if fp_on == 0:
         PATH_TO_SAVED = os.path.join(

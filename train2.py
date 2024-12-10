@@ -29,7 +29,7 @@ noise_scale = 0
 SAVE_TB = False
 
 batch_size = 128
-lr = 0.001
+lr = 0.1
 n_class = 200
 n_epochs = 100
 
@@ -53,7 +53,7 @@ def main():
     print(f"current model name is {model_name}")
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"\n=========================== run on {device} ===========================")
-    train_loader, valid_loader, _ = read_dataset(batch_size=batch_size, pic_path='/home/project/xupf/Databases/tiny-imagenet-200', dataset="IMAGENET")
+    train_loader, valid_loader, _ = read_dataset(batch_size=batch_size, pic_path='/home/project/xupf/Databases/tiny-imagenet-200', dataset="IMAGENET", num_workers=4)
     model = initialize_model(qn_on=qn_on, fp_on=fp_on, weight_bit=weight_bit, output_bit=output_bit,
                              isint=isint, clamp_std=clamp_std, quant_type=quant_type, group_number=group_number,
                              left_shift_bit=left_shift_bit, n_class=n_class, device=device)

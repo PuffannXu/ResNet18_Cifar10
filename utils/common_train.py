@@ -18,8 +18,11 @@ from torch.utils.tensorboard import SummaryWriter
 import torchvision
 import utils.my_utils as my
 import matplotlib.pyplot as plt  # Import matplotlib
+import time
 
 def initialize_model(qn_on=0, fp_on=0, weight_bit=0, output_bit=0, isint=0, clamp_std=0, quant_type="none", group_number=0, left_shift_bit=0, n_class=10, device='cuda'):
+    start_time = time.time()
+    print("---- in function【initialize_model】")
     model = ResNet18(qn_on=qn_on,
                      fp_on=fp_on,
                      weight_bit=weight_bit,
@@ -43,9 +46,14 @@ def initialize_model(qn_on=0, fp_on=0, weight_bit=0, output_bit=0, isint=0, clam
         model.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
     model.fc = torch.nn.Linear(512, n_class)  # 将最后的全连接层改掉
     model = model.to(device)
+    end_time = time.time()
+    #print(f"---- exit function【initialize_model】. Using time: {end_time-start_time}s.")
+    print()
     return model
 
 def train_and_evaluate(model, train_loader, valid_loader, criterion, my_loss, n_epochs, device, model_name, SAVE_TB, PATH_TO_PTH_CHECKPOINT, RELOAD_CHECKPOINT, lr):
+    start_time = time.time()
+    print("---- in function【train_and_evaluate】")
     valid_loss_min = np.Inf  # track change in validation loss
     accuracy = []
     counter = 0
@@ -60,7 +68,11 @@ def train_and_evaluate(model, train_loader, valid_loader, criterion, my_loss, n_
 
     if RELOAD_CHECKPOINT:
         print('\n Reloading checkpoint - pretrained model stored at: {} \n'.format(PATH_TO_PTH_CHECKPOINT))
-        model.load_state_dict(torch.load(PATH_TO_PTH_CHECKPOINT, map_location=device))
+        model.load_state_dict(torch.load(PATH_TO_PTH_CHECKPOINT, map_location=device),strict=False)
+        t1 = time.time()
+        #print(f"---- in function【train_and_evaluate】: RELOAD_CHECKPOINT done. Using time: {t1-start_time}s.")
+    else:
+        t1 = start_time
 
     for epoch in tqdm(range(1, n_epochs + 1)):
         train_loss = 0.0
@@ -72,7 +84,11 @@ def train_and_evaluate(model, train_loader, valid_loader, criterion, my_loss, n_
             lr = lr * 0.5
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
         model.train()
+        PRINT_FLAG = 1
         for data, target in train_loader:
+            if PRINT_FLAG:
+                t2 = time.time()
+                #print(f"---- in function【train_and_evaluate】: train_loader done. Using time: {t2 - t1}s.")
             data = data.to(device)
             target = target.to(device)
             optimizer.zero_grad()
@@ -83,9 +99,18 @@ def train_and_evaluate(model, train_loader, valid_loader, criterion, my_loss, n_
             total_loss.backward()
             optimizer.step()
             train_loss += loss.item() * data.size(0)
-
+            if PRINT_FLAG:
+                t3 = time.time()
+                #print(f"---- in function【train_and_evaluate】: optimizer done. Using time: {t3 - t2}s.")
+                PRINT_FLAG = 0
+        PRINT_FLAG = 1
+        t3 = time.time()
+        #print(f"---- in function【train_and_evaluate】: train_loader ALL done. Using time: {t3 - t1}s.")
         model.eval()
         for data, target in valid_loader:
+            if PRINT_FLAG:
+                t4 = time.time()
+                #print(f"---- in function【train_and_evaluate】: train_loader done. Using time: {t4 - t3}s.")
             data = data.to(device)
             target = target.to(device)
             output = model(data)[0].to(device)
@@ -95,6 +120,11 @@ def train_and_evaluate(model, train_loader, valid_loader, criterion, my_loss, n_
             correct_tensor = pred.eq(target.data.view_as(pred))
             total_sample += data.size(0)
             right_sample += correct_tensor.sum().item()
+            t5 = time.time()
+            if PRINT_FLAG:
+                #print(f"---- in function【train_and_evaluate】: train_loader done. Using time: {t5 - t4}s.")
+                print()
+                PRINT_FLAG = 0
         print("Accuracy:", 100 * right_sample / total_sample, "%")
         accuracy.append(right_sample / total_sample)
         train_loss = train_loss / len(train_loader.sampler)
