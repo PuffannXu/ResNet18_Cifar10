@@ -18,9 +18,9 @@ import matplotlib.pyplot as plt  # Import matplotlib
 img_quant_flag = 0
 isint = 0
 qn_on = 0
-fp_on = 1 #0:off 1:wo hw 2:hw
+fp_on = 2 #0:off 1:wo hw 2:hw
 quant_type = "group" #"layer" "channel" "group"
-group_number = 1
+group_number = 72
 left_shift_bit = 0
 
 SAVE_TB = False
@@ -40,11 +40,11 @@ n_class = 10
 # 开始训练
 n_epochs = 100
 RELOAD_CHECKPOINT = 1
-PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp8_wo_bn_w_sym_loss.pt'
+PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp8_w_bn_w_sym_loss_min_max.pt'
 # PATH_TO_PTH_CHECKPOINT = f'checkpoint/{model_name}.pt'
 
 def main():
-    model_name = "ResNet18_fp8_wo_bn_w_sym_loss"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    model_name = f"ResNet18_fp8_w_bn_w_sym_loss_min_max_{group_number}"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
     print(f"current model name is {model_name}")
     valid_loss_min = np.Inf # track change in validation loss
     accuracy = []
@@ -113,14 +113,23 @@ def main():
     criterion = nn.CrossEntropyLoss().to(device)
     if RELOAD_CHECKPOINT:
         print('\n Reloading checkpoint - pretrained model stored at: {} \n'.format(PATH_TO_PTH_CHECKPOINT))
-        model.load_state_dict(torch.load(PATH_TO_PTH_CHECKPOINT, map_location=device))
+        model.load_state_dict(torch.load(PATH_TO_PTH_CHECKPOINT, map_location=device),strict=False)
 
     # 自定义的对称性损失函数
     def symmetry_loss(weights):
         mean_value = torch.mean(weights)
         return torch.abs(mean_value)
 
-    def symmetry_loss_model(model):
+    def symmetry_loss_model_min_max(model):
+        loss = 0.0
+        for param in model.parameters():
+            if param.requires_grad:
+                max = torch.max(param)
+                min = torch.min(param)
+                loss += torch.abs(max-min)
+        return loss
+
+    def symmetry_loss_model_mean(model):
         loss = 0.0
         for param in model.parameters():
             if param.requires_grad:
@@ -154,7 +163,7 @@ def main():
             # calculate the batch loss（计算损失值）
             loss = criterion(output, target)
             # 计算对称性损失
-            sym_loss = symmetry_loss_model(model)
+            sym_loss = symmetry_loss_model_min_max(model)
             # 总损失
             total_loss = loss + 0.001 * sym_loss  # 0.01 是对称性损失的权重系数
             # backward pass: compute gradient of the loss with respect to model parameters

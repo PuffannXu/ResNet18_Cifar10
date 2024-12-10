@@ -28,7 +28,6 @@ from torch.nn import init
 from torch.nn.parameter import Parameter
 
 
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def data_quantization(data_float, half_level=15, scale=None,
@@ -779,7 +778,7 @@ def uint8_to_fp32(source_tensor: torch.ShortTensor, sign=None, e_max=None, m_sft
     else:
         e_4bit = e_max
         m_8bit = m_sft
-    m_float = (m_8bit.float() / (1<< (n_bits+left_shift_bit)))+1
+    m_float = (m_8bit.float() / (1<< (n_bits+left_shift_bit))+1)
     e_float = (2 ** (e_4bit-7)).float()
     out = (-1)**sign*e_float*m_float*mask
     return out
@@ -800,9 +799,8 @@ def fp8_alignment(ifm_uint8, left_shift_bit=3):
     e_delta = pre_macro_data_e_max.unsqueeze(1) - e
     m_shifted = (m << left_shift_bit) >> e_delta
     m_shifted_signed = (-1)**s * m_shifted
-    e_max = (e + e_delta) * mask
-    result = (s << (7+left_shift_bit)) + (e_max << (3+left_shift_bit)) + m_shifted
-
+    result = (s << (7+left_shift_bit)) + (pre_macro_data_e_max.unsqueeze(1) << (3+left_shift_bit)) + m_shifted
+    e_max = e + e_delta
     return result, s, e_max, m_shifted
 
 # 示例用法
@@ -1094,9 +1092,9 @@ class Weight_fp_hw(torch.autograd.Function):
         max_index = torch.argmax(error_percentage)
         d0, d1, d2, d3 = error_percentage.shape
 
-        i = torch.div(max_index, (d1 * d2 * d3), rounding_mode='floor')
-        j = torch.div(max_index % (d1 * d2 * d3), (d2 * d3), rounding_mode='floor')
-        k = torch.div(max_index % (d2 * d3), d3, rounding_mode='floor')
+        i = max_index // (d1 * d2 * d3)
+        j = (max_index % (d1 * d2 * d3)) // (d2 * d3)
+        k = (max_index % (d2 * d3)) // d3
         l = max_index % d3
         wm = weight_align_fp_out[i, j, k, l],
         wmr= weight[i, j, k, l]
@@ -1198,9 +1196,9 @@ class Feature_fp_hw(torch.autograd.Function):
         max_index = torch.argmax(error_percentage)
         d0, d1, d2, d3 = error_percentage.shape
 
-        i = torch.div(max_index, (d1 * d2 * d3), rounding_mode='floor')
-        j = torch.div(max_index % (d1 * d2 * d3), (d2 * d3), rounding_mode='floor')
-        k = torch.div(max_index % (d2 * d3), d3, rounding_mode='floor')
+        i = max_index // (d1 * d2 * d3)
+        j = (max_index % (d1 * d2 * d3)) // (d2 * d3)
+        k = (max_index % (d2 * d3)) // d3
         l = max_index % d3
         # print(error_percentage[i, j, k, l], feature_align_fp_out[i, j, k, l], feature[i, j, k, l])
         # 计算平均误差百分比

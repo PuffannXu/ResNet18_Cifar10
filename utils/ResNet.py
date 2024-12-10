@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from utils.my_utils import Conv2d_fp8, Conv2d_fp8_hw, Conv2d_quant
+BN = True
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1,qn_on: bool = False,
                  fp_on: int = 0,
@@ -64,7 +65,8 @@ class BasicBlock(nn.Module):
                  isint=isint, clamp_std=clamp_std,
                  quant_type=quant_type,
                  group_number=group_number, left_shift_bit=left_shift_bit)
-        # self.bn1 = norm_layer(planes)
+        if BN:
+            self.bn1 = norm_layer(planes)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = conv3x3(planes, planes, qn_on = qn_on,
                  fp_on=fp_on,
@@ -73,7 +75,8 @@ class BasicBlock(nn.Module):
                  isint=isint, clamp_std=clamp_std,
                  quant_type=quant_type,
                  group_number=group_number, left_shift_bit=left_shift_bit)
-        # self.bn2 = norm_layer(planes)
+        if BN:
+            self.bn2 = norm_layer(planes)
         self.downsample = downsample
         self.stride = stride
 
@@ -84,14 +87,16 @@ class BasicBlock(nn.Module):
         a['identity'] = x
         out = self.conv1(x)
         a['conv1'] = out
-        # out = self.bn1(out)
-        # a['bn1'] = out
+        if BN:
+            out = self.bn1(out)
+            a['bn1'] = out
         out = self.relu(out)
         a['relu'] = out
         out = self.conv2(out)
         a['conv2'] = out
-        # out = self.bn2(out)
-        # a['bn2'] = out
+        if BN:
+            out = self.bn2(out)
+            a['bn2'] = out
         if self.downsample is not None:
             identity = self.downsample(x)
             a['downsample'] = out
@@ -120,11 +125,14 @@ class Bottleneck(nn.Module):
         width = int(planes * (base_width / 64.)) * groups
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
         self.conv1 = conv1x1(inplanes, width)
-        # self.bn1 = norm_layer(width)
+        if BN:
+            self.bn1 = norm_layer(width)
         self.conv2 = conv3x3(width, width, stride, groups, dilation)
-        # self.bn2 = norm_layer(width)
+        if BN:
+            self.bn2 = norm_layer(width)
         self.conv3 = conv1x1(width, planes * self.expansion)
-        # self.bn3 = norm_layer(planes * self.expansion)
+        if BN:
+            self.bn3 = norm_layer(planes * self.expansion)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
@@ -133,15 +141,18 @@ class Bottleneck(nn.Module):
         identity = x
 
         out = self.conv1(x)
-        # out = self.bn1(out)
+        if BN:
+            out = self.bn1(out)
         out = self.relu(out)
 
         out = self.conv2(out)
-        # out = self.bn2(out)
+        if BN:
+            out = self.bn2(out)
         out = self.relu(out)
 
         out = self.conv3(out)
-        # out = self.bn3(out)
+        if BN:
+            out = self.bn3(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
@@ -199,7 +210,8 @@ class ResNet(nn.Module):
             self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
                                bias=False)
 
-        # self.bn1 = norm_layer(self.inplanes)
+        if BN:
+            self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
         #self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block=block, planes=64, blocks=layers[0],qn_on = qn_on,
@@ -246,12 +258,12 @@ class ResNet(nn.Module):
         # Zero-initialize the last BN in each residual branch,
         # so that the residual branch starts with zeros, and each residual block behaves like an identity.
         # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
-        # if zero_init_residual:
-        #     for m in self.modules():
-        #         if isinstance(m, Bottleneck):
-        #             nn.init.constant_(m.bn3.weight, 0)
-        #         elif isinstance(m, BasicBlock):
-        #             nn.init.constant_(m.bn2.weight, 0)
+        if BN and zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, Bottleneck):
+                    nn.init.constant_(m.bn3.weight, 0)
+                elif isinstance(m, BasicBlock):
+                    nn.init.constant_(m.bn2.weight, 0)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False,
                  qn_on: bool = False,
@@ -308,11 +320,12 @@ class ResNet(nn.Module):
         a['in'] = x
         x = self.conv1(x)
         a['conv1'] = x
-        # x = self.bn1(x)
-        # a['bn1'] = x
+        if BN:
+            x = self.bn1(x)
+            a['bn1'] = x
         x = self.relu(x)
         a['relu1'] = x
-        #x = self.maxpool(x)
+        # x = self.maxpool(x)
         for i in range(0,len(self.layer1)):
             x, a[f'layer1_{i}'] = self.layer1[i](x)
         for i in range(0, len(self.layer2)):

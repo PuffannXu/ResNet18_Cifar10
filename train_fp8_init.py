@@ -36,15 +36,15 @@ height = 224
 width = 224
 
 batch_size = 128
-n_class = 10
+n_class = 200
 # 开始训练
 n_epochs = 100
 RELOAD_CHECKPOINT = 0
-PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_wo_bn_w_sym_loss.pt'
+PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_w_bn_w_sym_loss.pt'
 # PATH_TO_PTH_CHECKPOINT = f'checkpoint/{model_name}.pt'
 
 def main():
-    model_name = f"ResNet18_wo_bn_w_sym_loss{group_number}"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    model_name = f"ResNet18_w_bn_w_sym_loss{group_number}_imagenet"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
     print(f"current model name is {model_name}")
     valid_loss_min = np.Inf # track change in validation loss
     accuracy = []
@@ -68,8 +68,10 @@ def main():
     # 读数据
 
     print(f"        ...... batch size is {batch_size}, loading data ......")
-    train_loader,valid_loader,test_loader = read_dataset(batch_size=batch_size,pic_path='/home/project/Resnet18/dataset/')
+    train_loader,valid_loader,test_loader = read_dataset(batch_size=batch_size,pic_path='/home/project/xupf/Databases/tiny-imagenet-200',dataset="IMAGENET")
     # 加载模型(使用预处理模型，修改最后一层，固定之前的权重)
+    # imagenet位置：/home/project/xupf/Databases/tiny-imagenet-200
+    # cifar10位置：/home/project/Resnet18/dataset/
 
     """
     ResNet18网络的7x7降采样卷积和池化操作容易丢失一部分信息,
@@ -303,6 +305,6 @@ def main():
     plt.show()
 
 if __name__ == '__main__':
-    for group_number in [9,18,36,72,144,288,576]:#1,9,
+    for group_number in [72,9,576]:#1,9,
         print(f'==================== group_number is {group_number} ====================')
         main()
