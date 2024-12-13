@@ -1,3 +1,5 @@
+import os
+
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -41,7 +43,10 @@ PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp32.pt'
 # PATH_TO_PTH_CHECKPOINT = f'checkpoint/{model_name}.pt'
 
 def main():
+    os.makedirs("checkpoint",exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
     print(f"current model name is {model_name}")
+    logger = my.setup_logger(name='Logger', log_file=f'logs/{model_name}.log')
     valid_loss_min = np.Inf # track change in validation loss
     accuracy = []
     lr = 0.01
