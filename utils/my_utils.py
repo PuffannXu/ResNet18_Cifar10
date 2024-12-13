@@ -1070,6 +1070,7 @@ class Weight_fp_hw(torch.autograd.Function):
             # 用零填充张量
             if padding_size > 0:
                 # 创建一个与 weight_n 具有相同维度的 padding
+                weight_n_scale = weight_n_scale.reshape([-1, 1])
                 padding_shape = list(weight_n_scale.shape)
                 padding_shape[0] = padding_size  # 只在最后一个维度上添加
                 padding = torch.zeros(padding_shape, device=weight_n_scale.device, dtype=weight_n_scale.dtype)
@@ -1078,6 +1079,17 @@ class Weight_fp_hw(torch.autograd.Function):
             weight_align, sign, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
         else:
             weight_align = weight_n_scale
+
+        weight_align = weight_align.reshape([-1, 1])
+        e_max = e_max.reshape([-1, 1])
+        m_sft = m_sft.reshape([-1, 1])
+        sign = sign.reshape([-1, 1])
+        #
+        weight_align = weight_align[:total_elements,:]
+        e_max = e_max[:total_elements, :]
+        m_sft = m_sft[:total_elements, :]
+        sign = sign[:total_elements, :]
+
         weight_align = weight_align.reshape([-1, ci, kx, ky])
         e_max = e_max.reshape([-1, ci, kx, ky])
         m_sft = m_sft.reshape([-1, ci, kx, ky])
@@ -1186,7 +1198,7 @@ class Feature_fp_hw(torch.autograd.Function):
         # feature_align = feature_align[:total_elements,:]
         # e_max = e_max[:total_elements, :]
         # m_sft = m_sft[:total_elements, :]
-        # sign = sign[:total_elements, :]
+        # sign = sign[:total_elements, :]`
 
         # feature_align = feature_align.reshape([-1, ci, kx, ky])
         # e_max = e_max.reshape([-1, ci, kx, ky])

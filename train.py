@@ -314,17 +314,17 @@ def main():
 
 if __name__ == '__main__':
 
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "layer"  # "layer" "channel" "group"
-    group_number = 72
-    model_name = f"ResNet18_fp8_w_hw_layer_epoch30"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    main()
-
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "channel"  # "layer" "channel" "group"
-    group_number = 72
-    model_name = f"ResNet18_fp8_w_hw_channel_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    main()
+    # fp_on = 2  # 0:off 1:wo hw 2:hw
+    # quant_type = "layer"  # "layer" "channel" "group"
+    # group_number = 72
+    # model_name = f"ResNet18_fp8_w_hw_layer_epoch30"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    # main()
+    #
+    # fp_on = 2  # 0:off 1:wo hw 2:hw
+    # quant_type = "channel"  # "layer" "channel" "group"
+    # group_number = 72
+    # model_name = f"ResNet18_fp8_w_hw_channel_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    # main()
 
     fp_on = 2  # 0:off 1:wo hw 2:hw
     quant_type = "group"  # "layer" "channel" "group"
