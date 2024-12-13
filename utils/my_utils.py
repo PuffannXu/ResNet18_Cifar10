@@ -1047,10 +1047,18 @@ class Weight_fp_hw(torch.autograd.Function):
         co, ci, kx, ky = weight_n_scale.shape
         if quant_type == 'channel':
             weight_reshape = weight_n_scale.reshape([co,-1])
-            weight_align, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
+            weight_align, sign, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
+            # weight_align = weight_align.transpose(1,0)
+            # sign=sign.transpose(1,0)
+            # e_max=e_max.transpose(1,0)
+            # m_sft =m_sft.transpose(1,0)
         elif quant_type == 'layer':
             weight_reshape = weight_n_scale.reshape([1,-1])
-            weight_align, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
+            weight_align, sign, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
+            # weight_align = weight_align.transpose(1,0)
+            # sign=sign.transpose(1,0)
+            # e_max=e_max.transpose(1,0)
+            # m_sft =m_sft.transpose(1,0)
         elif quant_type == 'group':
             # 计算需要的填充数量
             total_elements = co * ci * kx * ky
@@ -1136,11 +1144,19 @@ class Feature_fp_hw(torch.autograd.Function):
         co, ci, kx, ky = feature_n.shape
         total_elements = co * ci * kx * ky
         if quant_type == 'channel':
-            feature_reshape = feature_n.reshape([co,-1])
+            feature_reshape = feature_n.reshape([co,-1]).transpose(1,0)
             feature_align, sign, e_max, m_sft = fp8_alignment(feature_reshape, left_shift_bit=left_shift_bit)
+            feature_align = feature_align.transpose(1,0)
+            sign=sign.transpose(1,0)
+            e_max=e_max.transpose(1,0)
+            m_sft =m_sft.transpose(1,0)
         elif quant_type == 'layer':
-            feature_reshape = feature_n.reshape([1,-1])
+            feature_reshape = feature_n.reshape([1,-1]).transpose(1,0)
             feature_align, sign, e_max, m_sft = fp8_alignment(feature_reshape, left_shift_bit=left_shift_bit)
+            feature_align = feature_align.transpose(1,0)
+            sign = sign.transpose(1,0)
+            e_max = e_max.transpose(1,0)
+            m_sft = m_sft.transpose(1,0)
         elif quant_type == 'group':
             # 计算需要的填充数量
 
@@ -1289,7 +1305,7 @@ class Conv2d_fp8_hw(nn.Conv2d):
                  out_channels,
                  kernel_size,
                  stride,
-                 padding,
+                 padding=0,
                  dilation = 1,
                  groups: int = 1,
                  bias=False,

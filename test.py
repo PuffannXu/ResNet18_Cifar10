@@ -15,7 +15,7 @@ import numpy as np
 
 # 设置日志
 def main():
-    model_name = f"ResNet18_fp32_w_bn_w_sym_loss_imagenet"
+    model_name = f"ResNet18_fp8_w_hw_layer_epoch30"
     # Where to save the generated visualizations
     if fp_on == 0:
         PATH_TO_SAVED = os.path.join(
@@ -142,7 +142,7 @@ def main():
 if __name__ == '__main__':
     # ==========================全精度==============================
     fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "group"  # "layer" "channel" "group"
+    quant_type = "channel"  # "layer" "channel" "group"
     group_number = 1
     group_number_list = [9, 18, 36, 72, 144, 288, 576]
     left_shift_bit = 0
@@ -153,10 +153,11 @@ if __name__ == '__main__':
     clamp_std, noise_scale = 0, 0
     channel_number, height, width = 4, 224, 224
     # print(f'\n==================== left_shift_bit is {left_shift_bit} ====================')
-    # main()
+    main()
+    quant_type = "channel"  # "layer" "channel" "group"
     # left_shift_bit = 0
     # print(f'\n==================== left_shift_bit is {left_shift_bit} ====================')
-    # main()
+    main()
 
     # # ==============================INT:I8W8O8============================
     # isint = 0
@@ -191,6 +192,6 @@ if __name__ == '__main__':
     # # ===============================fp8硬件参数=================================
     # fp_on = 2
     # print(f'\n==================== fp_on is {fp_on} ====================')
-    for group_number in group_number_list:
-        print(f'\n==================== group_number is {group_number} ====================')
-        main()
+    # for group_number in group_number_list:
+    #     print(f'\n==================== group_number is {group_number} ====================')
+    #     main()

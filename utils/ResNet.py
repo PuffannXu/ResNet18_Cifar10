@@ -31,9 +31,28 @@ def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1,qn_on: bool = 
 
 
 
-def conv1x1(in_planes, out_planes, stride=1):
-    """1x1 convolution"""
-    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
+def conv1x1(in_planes, out_planes, stride=1,
+                 qn_on: bool = False,
+                 fp_on: int = 0,
+                 weight_bit: int = 4,
+                 output_bit: int = 8,
+                 isint: int = 0,
+                 clamp_std: int = 0,
+                 quant_type: str ='None',
+                 group_number: int =72, left_shift_bit: int = 0):
+    """3x3 convolution with padding"""
+    if (fp_on == 1):
+        return Conv2d_fp8(in_channels=in_planes, out_channels=out_planes, kernel_size=1, stride=stride,padding = 0,bias=False)
+    elif (fp_on == 2):
+        return Conv2d_fp8_hw(in_channels=in_planes, out_channels=out_planes, kernel_size=1, stride=stride, padding = 0,bias=False,
+                             quant_type=quant_type, group_number=group_number, left_shift_bit=left_shift_bit)
+    elif (qn_on):
+        return Conv2d_quant(qn_on=qn_on, in_channels=in_planes, out_channels=out_planes,
+                                kernel_size=1,padding = 0,
+                                stride=stride, weight_bit=weight_bit, output_bit=output_bit, isint=isint, clamp_std=clamp_std,
+                                bias=False)
+    else:
+        return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
 
 class BasicBlock(nn.Module):
@@ -283,7 +302,14 @@ class ResNet(nn.Module):
             stride = 1
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
+                conv1x1(self.inplanes, planes * block.expansion, stride,
+                        qn_on = qn_on,
+                 fp_on=fp_on,
+                 weight_bit=weight_bit,
+                 output_bit=output_bit,
+                 isint=isint, clamp_std=clamp_std,
+                 quant_type=quant_type,
+                 group_number=group_number, left_shift_bit=left_shift_bit),
                 norm_layer(planes * block.expansion),
             )
 
