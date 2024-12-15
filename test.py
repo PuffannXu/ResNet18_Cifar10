@@ -15,7 +15,7 @@ import numpy as np
 
 # 设置日志
 def main():
-    model_name = f"ResNet18_fp8_w_hw_layer_epoch30"
+
     # Where to save the generated visualizations
     if fp_on == 0:
         PATH_TO_SAVED = os.path.join(
@@ -141,8 +141,7 @@ def main():
 
 if __name__ == '__main__':
     # ==========================全精度==============================
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "channel"  # "layer" "channel" "group"
+    quant_type = "none"  # "layer" "channel" "group"
     group_number = 1
     group_number_list = [9, 18, 36, 72, 144, 288, 576]
     left_shift_bit = 0
@@ -152,46 +151,45 @@ if __name__ == '__main__':
     input_bit, weight_bit, output_bit = 8, 4, 8
     clamp_std, noise_scale = 0, 0
     channel_number, height, width = 4, 224, 224
-    # print(f'\n==================== left_shift_bit is {left_shift_bit} ====================')
-    main()
-    quant_type = "channel"  # "layer" "channel" "group"
-    # left_shift_bit = 0
-    # print(f'\n==================== left_shift_bit is {left_shift_bit} ====================')
+
+    model_name = f"ResNet18_fp32"
+    fp_on = 0  # 0:off 1:wo hw 2:hw
     main()
 
-    # # ==============================INT:I8W8O8============================
-    # isint = 0
-    # qn_on = 1
-    # img_quant_flag = qn_on
-    # input_bit, weight_bit, output_bit = 8, 8, 8
-    # clamp_std, noise_scale = 0, 0
-    # channel_number, height, width = 4, 224, 224
-    # print(f'\n==================== qn_on is {qn_on} ====================')
-    # print(f'\n==== input_bit, weight_bit, output_bit is {input_bit, weight_bit, output_bit} ====================')
-    # main()
-    # # ==============================INT:I8W4O8==========================
-    # input_bit, weight_bit, output_bit = 8, 4, 8
-    # print(f'\n==================== qn_on is {qn_on} ====================')
-    # print(f'\n==== input_bit, weight_bit, output_bit is {input_bit, weight_bit, output_bit} ====================')
-    # main()
-    # # ==============================INT:I4W8O8==========================
-    # input_bit, weight_bit, output_bit = 4, 8, 4
-    # print(f'\n==================== qn_on is {qn_on} ====================')
-    # print(f'\n==== input_bit, weight_bit, output_bit is {input_bit, weight_bit, output_bit} ====================')
-    # main()
-    # # ==============================INT:I4W4O4========================
-    # input_bit, weight_bit, output_bit = 4, 4, 4
-    # print(f'\n==================== qn_on is {qn_on} ====================')
-    # print(f'\n==== input_bit, weight_bit, output_bit is {input_bit, weight_bit, output_bit} ====================')
-    # main()
-    # # ===============================fp8===========================
-    # fp_on = 1
-    # qn_on = 0
-    # print(f'\n==================== fp_on is {fp_on} ====================')
-    # main()
-    # # ===============================fp8硬件参数=================================
-    # fp_on = 2
-    # print(f'\n==================== fp_on is {fp_on} ====================')
-    # for group_number in group_number_list:
-    #     print(f'\n==================== group_number is {group_number} ====================')
-    #     main()
+
+
+    model_name = f"ResNet18_fp8_wo_hw_epoch30"
+    fp_on = 1  # 0:off 1:wo hw 2:hw
+    main()
+
+    model_name = f"ResNet18_fp8_w_hw_layer_epoch30"
+    fp_on = 2  # 0:off 1:wo hw 2:hw
+    quant_type = "layer"  # "layer" "channel" "group"
+    main()
+
+    model_name = f"ResNet18_fp8_w_hw_channel_epoch30"
+    quant_type = "channel"  # "layer" "channel" "group"
+    main()
+
+    model_name = f"ResNet18_fp8_hw_group9_epoch30"
+    quant_type = "group"  # "layer" "channel" "group"
+    group_number = 9
+    main()
+
+    model_name = f"ResNet18_fp8_hw_group72_epoch30"
+    quant_type = "group"  # "layer" "channel" "group"
+    group_number = 72
+    main()
+
+    model_name = f"ResNet18_fp8_hw_group288_epoch30"
+    quant_type = "group"  # "layer" "channel" "group"
+    group_number = 288
+    main()
+
+    model_name = f"ResNet18_I8W8_epoch30"
+    qn_on =  1
+    fp_on = 0
+    img_quant_flag = qn_on
+    input_bit, weight_bit, output_bit = 8, 8, 8
+    main()
+

@@ -1045,6 +1045,7 @@ class Weight_fp_hw(torch.autograd.Function):
         if DBG:
             print(f"\nweight_max:{weight_max},weight_min:{weight_min},scaling_factor:{scaling_factor},weight_temp.max():{weight_scale.max()},weight_temp.min():{weight_scale.min()}")
         co, ci, kx, ky = weight_n_scale.shape
+        total_elements = co * ci * kx * ky
         if quant_type == 'channel':
             weight_reshape = weight_n_scale.reshape([co,-1])
             weight_align, sign, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
@@ -1061,7 +1062,6 @@ class Weight_fp_hw(torch.autograd.Function):
             # m_sft =m_sft.transpose(1,0)
         elif quant_type == 'group':
             # 计算需要的填充数量
-            total_elements = co * ci * kx * ky
             remainder = total_elements % group_number
             if remainder != 0:
                 padding_size = group_number - remainder
@@ -1078,7 +1078,8 @@ class Weight_fp_hw(torch.autograd.Function):
             weight_reshape = weight_n_scale.reshape([-1, group_number])
             weight_align, sign, e_max, m_sft = fp8_alignment(weight_reshape, left_shift_bit)
         else:
-            weight_align = weight_n_scale
+            weight_reshape = weight_n_scale.reshape([-1, 1])
+            weight_align, sign, e_max, m_sft = fp8_alignment(weight_reshape, 0)
 
         weight_align = weight_align.reshape([-1, 1])
         e_max = e_max.reshape([-1, 1])
@@ -1156,19 +1157,13 @@ class Feature_fp_hw(torch.autograd.Function):
         co, ci, kx, ky = feature_n.shape
         total_elements = co * ci * kx * ky
         if quant_type == 'channel':
-            feature_reshape = feature_n.reshape([co,-1]).transpose(1,0)
+            feature_reshape = feature_n.reshape([co,-1])
             feature_align, sign, e_max, m_sft = fp8_alignment(feature_reshape, left_shift_bit=left_shift_bit)
-            feature_align = feature_align.transpose(1,0)
-            sign=sign.transpose(1,0)
-            e_max=e_max.transpose(1,0)
-            m_sft =m_sft.transpose(1,0)
+
         elif quant_type == 'layer':
-            feature_reshape = feature_n.reshape([1,-1]).transpose(1,0)
+            feature_reshape = feature_n.reshape([1,-1])
             feature_align, sign, e_max, m_sft = fp8_alignment(feature_reshape, left_shift_bit=left_shift_bit)
-            feature_align = feature_align.transpose(1,0)
-            sign = sign.transpose(1,0)
-            e_max = e_max.transpose(1,0)
-            m_sft = m_sft.transpose(1,0)
+
         elif quant_type == 'group':
             # 计算需要的填充数量
 

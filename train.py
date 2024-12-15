@@ -38,7 +38,7 @@ batch_size = 128
 n_class = 10
 # 开始训练
 n_epochs = 30
-RELOAD_CHECKPOINT = 1
+RELOAD_CHECKPOINT = 0
 PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp32.pt'
 # PATH_TO_PTH_CHECKPOINT = f'checkpoint/{model_name}.pt'
 
@@ -315,8 +315,8 @@ def main():
 if __name__ == '__main__':
 
     # fp_on = 2  # 0:off 1:wo hw 2:hw
-    # quant_type = "layer"  # "layer" "channel" "group"
-    # group_number = 72
+    quant_type = "layer"  # "layer" "channel" "group"
+    group_number = 72
     # model_name = f"ResNet18_fp8_w_hw_layer_epoch30"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
     # main()
     #
@@ -326,20 +326,20 @@ if __name__ == '__main__':
     # model_name = f"ResNet18_fp8_w_hw_channel_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
     # main()
 
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "group"  # "layer" "channel" "group"
-    for group_number in [9,72,288]:#1,9,
-        print(f'==================== group_number is {group_number} ====================')
-        model_name = f'ResNet18_fp8_hw_{quant_type}{group_number}_epoch30'
-        main()
-
-    qn_on = 1
-    input_bit = 8
-    weight_bit = 8
-    output_bit = 8
-    fp_on = 0  # 0:off 1:wo hw 2:hw
-    model_name = f"ResNet18_I8W8_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    main()
+    # fp_on = 2  # 0:off 1:wo hw 2:hw
+    # quant_type = "group"  # "layer" "channel" "group"
+    # for group_number in [288]:#1,9,
+    #     print(f'==================== group_number is {group_number} ====================')
+    #     model_name = f'ResNet18_fp8_hw_{quant_type}{group_number}_epoch30'
+    #     main()
+    #
+    # qn_on = 1
+    # input_bit = 8
+    # weight_bit = 8
+    # output_bit = 8
+    # fp_on = 0  # 0:off 1:wo hw 2:hw
+    # model_name = f"ResNet18_I8W8_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    # main()
 
     qn_on = 1
     input_bit = 4
