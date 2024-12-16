@@ -157,6 +157,7 @@ def main():
             target = target.to(device)
             # clear the gradients of all optimized variables（清除梯度）
             optimizer.zero_grad()
+
             # forward pass: compute predicted outputs by passing inputs to the model
             # (正向传递：通过向模型传递输入来计算预测输出)
             output = model(data)[0].to(device)
@@ -169,7 +170,12 @@ def main():
             total_loss = loss + 0.001 * sym_loss  # 0.01 是对称性损失的权重系数
             # backward pass: compute gradient of the loss with respect to model parameters
             # （反向传递：计算损失相对于模型参数的梯度）
-            total_loss.backward()
+            try:
+                total_loss.backward()
+            except RuntimeError as e:
+                if 'nan' in str(e):
+                    print("NaN detected in loss, skipping update.")
+                    continue
             # perform a single optimization step (parameter update)
             # 执行单个优化步骤（参数更新）
             optimizer.step()
@@ -315,24 +321,44 @@ def main():
 if __name__ == '__main__':
 
     # fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "layer"  # "layer" "channel" "group"
-    group_number = 72
-    # model_name = f"ResNet18_fp8_w_hw_layer_epoch30"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    # quant_type = "layer"  # "layer" "channel" "group"
+    # group_number = 72
+    # model_name = f"ResNet18_fp8_w_hw_layer_wo_be_epoch30"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
     # main()
     #
     # fp_on = 2  # 0:off 1:wo hw 2:hw
     # quant_type = "channel"  # "layer" "channel" "group"
     # group_number = 72
-    # model_name = f"ResNet18_fp8_w_hw_channel_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    # model_name = f"ResNet18_fp8_w_hw_channel_wo_be_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
     # main()
 
-    # fp_on = 2  # 0:off 1:wo hw 2:hw
-    # quant_type = "group"  # "layer" "channel" "group"
-    # for group_number in [288]:#1,9,
-    #     print(f'==================== group_number is {group_number} ====================')
-    #     model_name = f'ResNet18_fp8_hw_{quant_type}{group_number}_epoch30'
-    #     main()
-    #
+    fp_on = 2  # 0:off 1:wo hw 2:hw
+    quant_type = "group"  # "layer" "channel" "group"
+    for group_number in [9,288]:#
+        print(f'==================== group_number is {group_number} ====================')
+        model_name = f'ResNet18_fp8_w_hw_{quant_type}{group_number}_wo_be_epoch30'
+        main()
+
+    left_shift_bit = 3
+
+    fp_on = 2  # 0:off 1:wo hw 2:hw
+    quant_type = "layer"  # "layer" "channel" "group"
+    group_number = 72
+    model_name = f"ResNet18_fp8_w_hw_layer_w_be_epoch30"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    main()
+
+    fp_on = 2  # 0:off 1:wo hw 2:hw
+    quant_type = "channel"  # "layer" "channel" "group"
+    group_number = 72
+    model_name = f"ResNet18_fp8_w_hw_channel_w_be_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    main()
+
+    fp_on = 2  # 0:off 1:wo hw 2:hw
+    quant_type = "group"  # "layer" "channel" "group"
+    for group_number in [72,9,288]:#1,9,
+        print(f'==================== group_number is {group_number} ====================')
+        model_name = f'ResNet18_fp8_w_hw_{quant_type}{group_number}_w_be_epoch30'
+        main()
     # qn_on = 1
     # input_bit = 8
     # weight_bit = 8
@@ -341,10 +367,10 @@ if __name__ == '__main__':
     # model_name = f"ResNet18_I8W8_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
     # main()
 
-    qn_on = 1
-    input_bit = 4
-    weight_bit = 4
-    output_bit = 4
-    fp_on = 0  # 0:off 1:wo hw 2:hw
-    model_name = f"ResNet18_I4W4_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    main()
+    # qn_on = 1
+    # input_bit = 4
+    # weight_bit = 4
+    # output_bit = 4
+    # fp_on = 0  # 0:off 1:wo hw 2:hw
+    # model_name = f"ResNet18_I4W4_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    # main()

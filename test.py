@@ -152,44 +152,68 @@ if __name__ == '__main__':
     clamp_std, noise_scale = 0, 0
     channel_number, height, width = 4, 224, 224
 
-    model_name = f"ResNet18_fp32"
-    fp_on = 0  # 0:off 1:wo hw 2:hw
-    main()
+    # model_name = f"ResNet18_fp32"
+    # fp_on = 0  # 0:off 1:wo hw 2:hw
+    # main()
 
 
 
-    model_name = f"ResNet18_fp8_wo_hw_epoch30"
-    fp_on = 1  # 0:off 1:wo hw 2:hw
-    main()
+    # model_name = f"ResNet18_fp8_wo_hw_epoch30"
+    # fp_on = 1  # 0:off 1:wo hw 2:hw
+    # main()
 
-    model_name = f"ResNet18_fp8_w_hw_layer_epoch30"
+    model_name = f"ResNet18_fp8_w_hw_layer_wo_be_epoch30"
     fp_on = 2  # 0:off 1:wo hw 2:hw
     quant_type = "layer"  # "layer" "channel" "group"
     main()
 
-    model_name = f"ResNet18_fp8_w_hw_channel_epoch30"
+    model_name = f"ResNet18_fp8_w_hw_channel_wo_be_epoch30"
     quant_type = "channel"  # "layer" "channel" "group"
     main()
 
-    model_name = f"ResNet18_fp8_hw_group9_epoch30"
+    model_name = f"ResNet18_fp8_w_hw_group9_wo_be_epoch30"
     quant_type = "group"  # "layer" "channel" "group"
     group_number = 9
     main()
 
-    model_name = f"ResNet18_fp8_hw_group72_epoch30"
+    model_name = f"ResNet18_fp8_w_hw_group72_wo_be_epoch30"
     quant_type = "group"  # "layer" "channel" "group"
     group_number = 72
     main()
 
-    model_name = f"ResNet18_fp8_hw_group288_epoch30"
+    model_name = f"ResNet18_fp8_w_hw_group288_wo_be_epoch30"
     quant_type = "group"  # "layer" "channel" "group"
     group_number = 288
     main()
 
-    model_name = f"ResNet18_I8W8_epoch30"
-    qn_on =  1
-    fp_on = 0
-    img_quant_flag = qn_on
-    input_bit, weight_bit, output_bit = 8, 8, 8
+    left_shift_bit = 3
+    model_name = f"ResNet18_fp8_w_hw_layer_w_be_epoch30"
+    fp_on = 2  # 0:off 1:wo hw 2:hw
+    quant_type = "layer"  # "layer" "channel" "group"
     main()
+
+    model_name = f"ResNet18_fp8_w_hw_channel_w_be_epoch30"
+    quant_type = "channel"  # "layer" "channel" "group"
+    main()
+
+    model_name = f"ResNet18_fp8_w_hw_group9_w_be_epoch30"
+    quant_type = "group"  # "layer" "channel" "group"
+    group_number = 9
+    main()
+
+    model_name = f"ResNet18_fp8_w_hw_group72_w_be_epoch30"
+    quant_type = "group"  # "layer" "channel" "group"
+    group_number = 72
+    main()
+
+    model_name = f"ResNet18_fp8_w_hw_group288_w_be_epoch30"
+    quant_type = "group"  # "layer" "channel" "group"
+    group_number = 288
+    main()
+    # model_name = f"ResNet18_I8W8_epoch30"
+    # qn_on =  1
+    # fp_on = 0
+    # img_quant_flag = qn_on
+    # input_bit, weight_bit, output_bit = 8, 8, 8
+    # main()
 

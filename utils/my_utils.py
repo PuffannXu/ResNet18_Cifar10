@@ -888,7 +888,7 @@ class Weight_fp(torch.autograd.Function):
         ctx.save_for_backward()
         # 首先计算scale_factor
         weight_max = torch.max(torch.abs(weight))
-        scaling_factor = weight_max/448
+        scaling_factor = weight_max/(1.875 * 2**8)
         weight_scale = weight / scaling_factor
         weight_n_scale = fp8_downcast(weight_scale, n_bits)
         weight_n_scale = uint8_to_fp32(weight_n_scale, n_bits=n_bits, left_shift_bit=0)
@@ -910,7 +910,7 @@ class Feature_fp(torch.autograd.Function):
         ctx.save_for_backward()
       # 首先计算scale_factor
         feature_max = torch.max(torch.abs(feature))
-        scaling_factor = feature_max / 448
+        scaling_factor = feature_max / (1.875 * 2**8)
         feature_scale = feature / scaling_factor
 
         feature_n_scale = fp8_downcast(feature_scale, n_bits)
@@ -938,15 +938,15 @@ DBG = 0
 #         ctx.save_for_backward()
 #         #对称量化
 #         # weight_max = torch.max(torch.abs(weight))
-#         # scaling_factor = weight_max/448
+#         # scaling_factor = weight_max/(1.875 * 2**(n_bits+left_shift_bit))
 #         # weight_scale = weight / scaling_factor
 #
 #
 #         #非对称量化
 #         weight_max = torch.max(weight)
 #         weight_min = torch.min(weight)
-#         scaling_factor = (weight_max-weight_min) / 448/2
-#         weight_temp = (weight - weight_min) / scaling_factor - 448
+#         scaling_factor = (weight_max-weight_min) / (1.875 * 2**(n_bits+left_shift_bit))/2
+#         weight_temp = (weight - weight_min) / scaling_factor - (1.875 * 2**(n_bits+left_shift_bit))
 #         weight_n_scale = fp8_downcast(weight_temp, n_bits)
 #         if DBG:
 #             print(f"\nweight_max:{weight_max},weight_min:{weight_min},scaling_factor:{scaling_factor},weight_temp.max():{weight_temp.max()},weight_temp.min():{weight_temp.min()}")
@@ -986,7 +986,7 @@ DBG = 0
 #         sign = sign[:co, :ci, :kx, :ky]
 #         a = weight_temp
 #         weight_align_fp = uint8_to_fp32(weight_align, sign, e_max, m_sft, n_bits, left_shift_bit=left_shift_bit)
-#         weight_align_fp_out = (weight_align_fp +448) * scaling_factor + weight_min
+#         weight_align_fp_out = (weight_align_fp +(1.875 * 2**(n_bits+left_shift_bit))) * scaling_factor + weight_min
 #         b = weight
 #         if DBG:
 #             # 计算绝对误差
@@ -1032,14 +1032,14 @@ class Weight_fp_hw(torch.autograd.Function):
         #对称量化
         weight_max = torch.max(torch.abs(weight))
         weight_min=0
-        scaling_factor = weight_max/448
+        scaling_factor = weight_max/(1.875 * 2**(n_bits+left_shift_bit))
         weight_scale = weight / scaling_factor
         q_min=0
         #非对称量化
         # weight_max = torch.max(weight)
         # weight_min = torch.min(weight)
-        # scaling_factor = (weight_max-weight_min) / 448/2
-        # weight_scale = (weight - weight_min) / scaling_factor - 448
+        # scaling_factor = (weight_max-weight_min) / (1.875 * 2**(n_bits+left_shift_bit))/2
+        # weight_scale = (weight - weight_min) / scaling_factor - (1.875 * 2**(n_bits+left_shift_bit))
         # q_min = -488
         weight_n_scale = fp8_downcast(weight_scale, n_bits)
         if DBG:
@@ -1150,7 +1150,7 @@ class Feature_fp_hw(torch.autograd.Function):
         # quant type can be none, layer, channel, group
         ctx.save_for_backward()
         feature_max = torch.max(torch.abs(feature))
-        scaling_factor = feature_max / 448
+        scaling_factor = feature_max / (1.875 * 2**(n_bits+left_shift_bit))
         feature_scale = feature / scaling_factor
 
         feature_n = fp8_downcast(feature_scale, n_bits)
@@ -1209,6 +1209,7 @@ class Feature_fp_hw(torch.autograd.Function):
         # # print(feature_align)
         # print(feature_align_fp[:,0,0,0])
         feature_align_fp_out = feature_align_fp * scaling_factor
+
 
         # 计算绝对误差
         absolute_error = torch.abs(feature_align_fp_out - feature)
@@ -1297,8 +1298,8 @@ class Conv2d_fp8(nn.Conv2d):
 
     def forward(self, x):
         weight_n = Weight_fp.apply(self.weight, self.n_bits)
-        if torch.isnan(weight_n).any():
-            print("Nan in weight")
+        # if torch.isnan(weight_n).any():
+        #     print("Nan in weight")
         x_old= x
         x = self._conv_forward(x, weight_n, self.bias)
         x_for = x
@@ -1349,8 +1350,8 @@ class Conv2d_fp8_hw(nn.Conv2d):
         weight_n = Weight_fp_hw.apply(self.weight, self.n_bits, self.quant_type, self.group_number, self.left_shift_bit)
         x_init = x
         # x = Feature_fp_hw.apply(x, self.n_bits, self.quant_type, self.group_number)
-        if torch.isnan(weight_n).any():
-            print("Nan in weight")
+        # if torch.isnan(weight_n).any():
+        #     print("Nan in weight")
         x = self._conv_forward(x, weight_n, self.bias)
         x = Feature_fp_hw.apply(x, self.n_bits, "none", 1, self.left_shift_bit)
         if torch.isnan(x).any():
