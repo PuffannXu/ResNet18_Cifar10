@@ -1,3 +1,5 @@
+import os
+
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -18,9 +20,6 @@ import matplotlib.pyplot as plt  # Import matplotlib
 img_quant_flag = 0
 isint = 0
 qn_on = 0
-fp_on = 2 #0:off 1:wo hw 2:hw
-quant_type = "channel" #"layer" "channel" "group"
-group_number = 72
 left_shift_bit = 0
 
 SAVE_TB = False
@@ -38,14 +37,16 @@ width = 224
 batch_size = 128
 n_class = 10
 # 开始训练
-n_epochs = 30
-RELOAD_CHECKPOINT = 1
-PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp32.pt'
+n_epochs = 300
+RELOAD_CHECKPOINT = 0
+PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_lar_fp32.pt'
 # PATH_TO_PTH_CHECKPOINT = f'checkpoint/{model_name}.pt'
 
 def main():
-    model_name = f"ResNet18_fp8_w_hw_channel_epoch30"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    os.makedirs("checkpoint",exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
     print(f"current model name is {model_name}")
+    logger = my.setup_logger(name='Logger', log_file=f'logs/{model_name}.log')
     valid_loss_min = np.Inf # track change in validation loss
     accuracy = []
     lr = 0.01
@@ -85,18 +86,18 @@ def main():
                      group_number=group_number,
                      left_shift_bit=left_shift_bit) # 得到预训练模型
     if fp_on == 1:
-        model.conv1 = my.Conv2d_fp8(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
+        model.conv1 = my.Conv2d_fp8(in_channels=4, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
     elif fp_on == 2:
-        model.conv1 = my.Conv2d_fp8_hw(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1,
+        model.conv1 = my.Conv2d_fp8_hw(in_channels=4, out_channels=64, kernel_size=3, stride=1, padding=1,
                                    bias=False, quant_type=quant_type, group_number=group_number, left_shift_bit=left_shift_bit)
     elif (qn_on):
-        model.conv1 = my.Conv2d_quant(qn_on=qn_on, in_channels=3, out_channels=64,
+        model.conv1 = my.Conv2d_quant(qn_on=qn_on, in_channels=4, out_channels=64,
                                   kernel_size=3,
                                   stride=1, padding=1,
                                   bias=False,
                                   weight_bit=weight_bit, output_bit=output_bit, isint=isint, clamp_std=clamp_std)
     else:
-        model.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
+        model.conv1 = nn.Conv2d(in_channels=4, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
     model.fc = torch.nn.Linear(512, n_class) # 将最后的全连接层改掉
     # Initialize weights using fp8e4m3 distribution
     # with torch.no_grad():
@@ -109,6 +110,8 @@ def main():
     #         plt.show()
             # break  # 只显示一个参数的分布
     model = model.to(device)
+    print(model)
+    # summary(model, input_size=(1,4,32,32))
     # 使用交叉熵损失函数
     criterion = nn.CrossEntropyLoss().to(device)
     if RELOAD_CHECKPOINT:
@@ -156,6 +159,7 @@ def main():
             target = target.to(device)
             # clear the gradients of all optimized variables（清除梯度）
             optimizer.zero_grad()
+
             # forward pass: compute predicted outputs by passing inputs to the model
             # (正向传递：通过向模型传递输入来计算预测输出)
             output = model(data)[0].to(device)
@@ -168,7 +172,13 @@ def main():
             total_loss = loss + 0.001 * sym_loss  # 0.01 是对称性损失的权重系数
             # backward pass: compute gradient of the loss with respect to model parameters
             # （反向传递：计算损失相对于模型参数的梯度）
-            total_loss.backward()
+            try:
+                total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            except RuntimeError as e:
+                if 'nan' in str(e):
+                    print("NaN detected in loss, skipping update.")
+                    continue
             # perform a single optimization step (parameter update)
             # 执行单个优化步骤（参数更新）
             optimizer.step()
@@ -292,7 +302,7 @@ def main():
     ax1.plot(valid_losses, label='Validation Loss', color='g')
     ax1.set_xlabel('Epoch')
     ax1.set_ylabel('Loss')
-    ax1.set_title('Loss and Learning Rate over Epochs')
+    ax1.set_title(f'Loss / Learning Rate / Accuracy over Epochs in {model_name}')
     ax1.legend(loc='upper left')
 
     # Creating a second y-axis for the learning rate
@@ -305,13 +315,40 @@ def main():
     ax3.plot(accuracies, label='Accuracy')
     ax3.set_xlabel('Epoch')
     ax3.set_ylabel('Accuracy')
-    ax3.set_title('Accuracy over Epochs')
+    # ax3.set_title('Accuracy over Epochs')
     plt.legend()
 
     plt.tight_layout()
     plt.show()
 
+
 if __name__ == '__main__':
-    # for group_number in [1,9,18,36,72,144,288,576]:#1,9,
-    #     print(f'==================== group_number is {group_number} ====================')
+    RELOAD_CHECKPOINT = 0
+    left_shift_bit = 0
+    quant_type = "group"  # "layer" "channel" "group"
+    group_number = 72
+    fp_on = 0  # 0:off 1:wo hw 2:hw
+    model_name = f"ResNet18_lar_fp32"
     main()
+
+    fp_on = 2  # 0:off 1:wo hw 2:hw
+    quant_type = "group"  # "layer" "channel" "group"
+    for group_number in [72,9,288]:#1,9,
+        print(f'==================== group_number is {group_number} ====================')
+        model_name = f'ResNet18_fp8_w_hw_{quant_type}{group_number}_w_be_epoch30_reload'
+        main()
+    # qn_on = 1
+    # input_bit = 8
+    # weight_bit = 8
+    # output_bit = 8
+    # fp_on = 0  # 0:off 1:wo hw 2:hw
+    # model_name = f"ResNet18_I8W8_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    # main()
+    #
+    # qn_on = 1
+    # input_bit = 4
+    # weight_bit = 4
+    # output_bit = 4
+    # fp_on = 0  # 0:off 1:wo hw 2:hw
+    # model_name = f"ResNet18_I4W4_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    # main()

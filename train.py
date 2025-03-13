@@ -17,17 +17,15 @@ import matplotlib.pyplot as plt  # Import matplotlib
 # ======================================== #
 # 量化训练参数
 # ======================================== #
-img_quant_flag = 0
-isint = 0
+img_quant_flag = 1
+isint = 1
 qn_on = 0
 left_shift_bit = 0
 
 SAVE_TB = False
 
 
-input_bit = 8
-weight_bit = 4
-output_bit = 8
+
 clamp_std = 0
 noise_scale = 0
 channel_number = 4
@@ -86,19 +84,32 @@ def main():
                      group_number=group_number,
                      left_shift_bit=left_shift_bit) # 得到预训练模型
     if fp_on == 1:
-        model.conv1 = my.Conv2d_fp8(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
+        model.conv1 = my.Conv2d_fp8(in_channels=channel_number, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
     elif fp_on == 2:
-        model.conv1 = my.Conv2d_fp8_hw(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1,
+        model.conv1 = my.Conv2d_fp8_hw(in_channels=channel_number, out_channels=64, kernel_size=3, stride=1, padding=1,
                                    bias=False, quant_type=quant_type, group_number=group_number, left_shift_bit=left_shift_bit)
     elif (qn_on):
-        model.conv1 = my.Conv2d_quant(qn_on=qn_on, in_channels=3, out_channels=64,
+        model.conv1 = my.Conv2d_quant(qn_on=qn_on, in_channels=channel_number, out_channels=64,
                                   kernel_size=3,
                                   stride=1, padding=1,
                                   bias=False,
                                   weight_bit=weight_bit, output_bit=output_bit, isint=isint, clamp_std=clamp_std)
     else:
-        model.conv1 = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
-    model.fc = torch.nn.Linear(512, n_class) # 将最后的全连接层改掉
+        model.conv1 = nn.Conv2d(in_channels=channel_number, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
+
+    if (qn_on):
+        model.fc = my.Linear_quant_noise(qn_on,512, n_class,weight_bit=weight_bit, output_bit=output_bit, isint=isint, clamp_std=clamp_std,noise_scale=0)
+    else:
+        model.fc = torch.nn.Linear(512, n_class) # 将最后的全连接层改掉
+
+    # for m in model.modules():
+    #     if isinstance(m, nn.Linear):
+    #         nn.init.uniform_(m.weight, -1, 1)
+    #         nn.init.constant_(m.bias, 0)
+        # elif isinstance(m, nn.Conv2d):
+        #     nn.init.uniform_(m.weight, 0, 0.1)
+        #     if m.bias is not None:
+        #         nn.init.constant_(m.bias, 0)
     # Initialize weights using fp8e4m3 distribution
     # with torch.no_grad():
     #     for name, param in model.named_parameters():
@@ -114,7 +125,9 @@ def main():
     criterion = nn.CrossEntropyLoss().to(device)
     if RELOAD_CHECKPOINT:
         print('\n Reloading checkpoint - pretrained model stored at: {} \n'.format(PATH_TO_PTH_CHECKPOINT))
-        model.load_state_dict(torch.load(PATH_TO_PTH_CHECKPOINT, map_location=device),strict=False)
+        x = torch.load(PATH_TO_PTH_CHECKPOINT, map_location=device)
+        # del x['conv1.weight']
+        model.load_state_dict(x, strict=False)
 
     # 自定义的对称性损失函数
     def symmetry_loss(weights):
@@ -137,6 +150,8 @@ def main():
                 mean = torch.mean(param)
                 loss += torch.abs(mean)
         return loss
+
+    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
     for epoch in tqdm(range(1, n_epochs+1)):
         # keep track of training and validation loss
         train_loss = 0.0
@@ -147,7 +162,7 @@ def main():
         if counter/10 ==1:
             counter = 0
             lr = lr*0.5
-        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
+
         ###################
         # 训练集的模型 #
         ###################
@@ -167,7 +182,7 @@ def main():
             # 计算对称性损失
             sym_loss = symmetry_loss_model_min_max(model)
             # 总损失
-            total_loss = loss + 0.001 * sym_loss  # 0.01 是对称性损失的权重系数
+            total_loss = loss
             # backward pass: compute gradient of the loss with respect to model parameters
             # （反向传递：计算损失相对于模型参数的梯度）
             try:
@@ -319,58 +334,22 @@ def main():
     plt.show()
 
 if __name__ == '__main__':
+    img_quant_flag = 1
+    isint = 0
+    qn_on = 1
+    input_bit = 8
+    weight_bit = 8
+    output_bit = 8
+    left_shift_bit = 0
+    n_epochs = 200
+    RELOAD_CHECKPOINT = 1
+    PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp32_ch{channel_number}_4_newrelu.pt'#checkpoint/ResNet18_fp32_ch{channel_number}_3.pt'
+    # PATH_TO_PTH_CHECKPOINT = f'checkpoint/{model_name}.pt'
 
-    # fp_on = 2  # 0:off 1:wo hw 2:hw
-    # quant_type = "layer"  # "layer" "channel" "group"
-    # group_number = 72
-    # model_name = f"ResNet18_fp8_w_hw_layer_wo_be_epoch30"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    # main()
-    #
-    # fp_on = 2  # 0:off 1:wo hw 2:hw
-    # quant_type = "channel"  # "layer" "channel" "group"
-    # group_number = 72
-    # model_name = f"ResNet18_fp8_w_hw_channel_wo_be_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    # main()
 
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "group"  # "layer" "channel" "group"
-    for group_number in [9,288]:#
-        print(f'==================== group_number is {group_number} ====================')
-        model_name = f'ResNet18_fp8_w_hw_{quant_type}{group_number}_wo_be_epoch30'
-        main()
-
-    left_shift_bit = 3
-
-    fp_on = 2  # 0:off 1:wo hw 2:hw
+    fp_on = 0  # 0:off 1:wo hw 2:hw
     quant_type = "layer"  # "layer" "channel" "group"
     group_number = 72
-    model_name = f"ResNet18_fp8_w_hw_layer_w_be_epoch30"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    model_name = f"ResNet18_I8W8_ch{channel_number}_4_newrelu"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
     main()
 
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "channel"  # "layer" "channel" "group"
-    group_number = 72
-    model_name = f"ResNet18_fp8_w_hw_channel_w_be_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    main()
-
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "group"  # "layer" "channel" "group"
-    for group_number in [72,9,288]:#1,9,
-        print(f'==================== group_number is {group_number} ====================')
-        model_name = f'ResNet18_fp8_w_hw_{quant_type}{group_number}_w_be_epoch30'
-        main()
-    # qn_on = 1
-    # input_bit = 8
-    # weight_bit = 8
-    # output_bit = 8
-    # fp_on = 0  # 0:off 1:wo hw 2:hw
-    # model_name = f"ResNet18_I8W8_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    # main()
-
-    # qn_on = 1
-    # input_bit = 4
-    # weight_bit = 4
-    # output_bit = 4
-    # fp_on = 0  # 0:off 1:wo hw 2:hw
-    # model_name = f"ResNet18_I4W4_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    # main()

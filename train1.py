@@ -321,74 +321,31 @@ def main():
 
 
 if __name__ == '__main__':
-    RELOAD_CHECKPOINT = 0
+    img_quant_flag = 0
+    isint = 0
+    qn_on = 0
     left_shift_bit = 0
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "layer"  # "layer" "channel" "group"
-    group_number = 72
-    model_name = f"ResNet18_fp8_w_hw_layer_wo_be_epoch30"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    main()
-
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "channel"  # "layer" "channel" "group"
-    group_number = 72
-    model_name = f"ResNet18_fp8_w_hw_channel_wo_be_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    main()
-
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "group"  # "layer" "channel" "group"
-    for group_number in [9,72]:#
-        print(f'==================== group_number is {group_number} ====================')
-        model_name = f'ResNet18_fp8_w_hw_{quant_type}{group_number}_wo_be_epoch30'
-        main()
-
+    n_epochs = 100
     RELOAD_CHECKPOINT = 1
-    left_shift_bit = 0
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "layer"  # "layer" "channel" "group"
+    PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp32.pt'
+    # PATH_TO_PTH_CHECKPOINT = f'checkpoint/{model_name}.pt'
+    quant_type = "group"  # "layer" "channel" "group"
     group_number = 72
-    model_name = f"ResNet18_fp8_w_hw_layer_wo_be_epoch30_reload"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    main()
 
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "channel"  # "layer" "channel" "group"
-    group_number = 72
-    model_name = f"ResNet18_fp8_w_hw_channel_wo_be_epoch30_reload"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    qn_on = 1
+    input_bit = 8
+    weight_bit = 8
+    output_bit = 8
+    fp_on = 0  # 0:off 1:wo hw 2:hw
+    model_name = f"ResNet18_I8W8_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
     main()
 
     fp_on = 2  # 0:off 1:wo hw 2:hw
     quant_type = "group"  # "layer" "channel" "group"
-    for group_number in [9,72,288]:#
-        print(f'==================== group_number is {group_number} ====================')
-        model_name = f'ResNet18_fp8_w_hw_{quant_type}{group_number}_wo_be_epoch30_reload'
-        main()
-    left_shift_bit = 3
-
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "layer"  # "layer" "channel" "group"
     group_number = 72
-    model_name = f"ResNet18_fp8_w_hw_layer_w_be_epoch30_reload"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    model_name = f"ResNet18_fp8_hw_{quant_type}{group_number}"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
     main()
 
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "channel"  # "layer" "channel" "group"
-    group_number = 72
-    model_name = f"ResNet18_fp8_w_hw_channel_w_be_epoch30_reload"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    main()
-
-    fp_on = 2  # 0:off 1:wo hw 2:hw
-    quant_type = "group"  # "layer" "channel" "group"
-    for group_number in [72,9,288]:#1,9,
-        print(f'==================== group_number is {group_number} ====================')
-        model_name = f'ResNet18_fp8_w_hw_{quant_type}{group_number}_w_be_epoch30_reload'
-        main()
-    # qn_on = 1
-    # input_bit = 8
-    # weight_bit = 8
-    # output_bit = 8
-    # fp_on = 0  # 0:off 1:wo hw 2:hw
-    # model_name = f"ResNet18_I8W8_epoch30"  # f'ResNet18_fp8_hw_{quant_type}{group_number}'
-    # main()
     #
     # qn_on = 1
     # input_bit = 4

@@ -18,7 +18,14 @@ num_workers = 0
 batch_size = 16
 # percentage of training set to use as validation
 valid_size = 0.2
+class AddChannel(object):
+    """将图像的通道数从3增加到4。"""
 
+    def __call__(self, img):
+        # 在通道维度增加一个全零通道
+        zero_channel = torch.zeros((1, img.size(1), img.size(2)))  # 创建一个全零通道
+        img = torch.cat((img, zero_channel), dim=0)  # 在通道维度拼接
+        return img
 def read_dataset(batch_size=16,valid_size=0.2,num_workers=0,pic_path='dataset'):
     """
     batch_size: Number of loaded drawings per batch
@@ -31,20 +38,26 @@ def read_dataset(batch_size=16,valid_size=0.2,num_workers=0,pic_path='dataset'):
         # transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),  #图像一半的概率翻转，一半的概率不翻转
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225]), #R,G,B每层的归一化用到的均值和方差
-        Cutout(n_holes=1, length=16),
+        # transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225]), #R,G,B每层的归一化用到的均值和方差
+        AddChannel(),  # 添加新的通道
+        # Cutout(n_holes=1, length=16),
     ])
 
+    transform_valid = transforms.Compose([
+        transforms.ToTensor(),
+        # transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225]),
+        AddChannel(),  # 添加新的通道
+    ])
     transform_test = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225]),
+        # transforms.Normalize(mean=[0.485, 0.456, 0.406],std=[0.229, 0.224, 0.225]),
+        AddChannel(),  # 添加新的通道
     ])
-
     # 将数据转换为torch.FloatTensor，并标准化。
     train_data = datasets.CIFAR10(pic_path, train=True,
                                 download=True, transform=transform_train)
     valid_data = datasets.CIFAR10(pic_path, train=True,
-                                download=True, transform=transform_test)
+                                download=True, transform=transform_valid)
     test_data = datasets.CIFAR10(pic_path, train=True,
                                 download=True, transform=transform_test)
     # obtain training indices that will be used for validation

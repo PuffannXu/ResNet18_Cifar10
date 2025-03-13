@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from utils.my_utils import Conv2d_fp8, Conv2d_fp8_hw, Conv2d_quant
-BN = True
+from utils.my_utils import Conv2d_fp8, Conv2d_fp8_hw, Conv2d_quant, Linear_quant_noise
+BN = 0
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1,qn_on: bool = False,
                  fp_on: int = 0,
@@ -86,7 +86,8 @@ class BasicBlock(nn.Module):
                  group_number=group_number, left_shift_bit=left_shift_bit)
         if BN:
             self.bn1 = norm_layer(planes)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.Hardtanh(min_val=0, max_val=1)
+        # self.relu = nn.ReLU(inplace=True)
         self.conv2 = conv3x3(planes, planes, qn_on = qn_on,
                  fp_on=fp_on,
                  weight_bit=weight_bit,
@@ -103,27 +104,34 @@ class BasicBlock(nn.Module):
         a = {}
 
         identity = x
-        a['identity'] = x
+        # a['identity'] = x
         out = self.conv1(x)
-        a['conv1'] = out
+        # a['conv1'] = out
         if BN:
             out = self.bn1(out)
-            a['bn1'] = out
+            # a['bn1'] = out
         out = self.relu(out)
-        a['relu'] = out
+        a['relu1'] = out
         out = self.conv2(out)
-        a['conv2'] = out
+        # a['conv2'] = out
         if BN:
             out = self.bn2(out)
-            a['bn2'] = out
+            # a['bn2'] = out
+        out = self.relu(out)
+        a['relu2'] = out
         if self.downsample is not None:
             identity = self.downsample(x)
-            a['downsample'] = out
-        out = out.clone()  # 克隆 out
-        out += identity
-        out = self.relu(out)
-        a['relu'] = out
-
+            identity = self.relu(identity)
+            a1 = identity*127
+            # a['downsample'] = identity
+            # out = out.clone()  # 克隆 out
+            out1 = out*127
+            out = a1 + out1
+            # out1 = out1.cpu().detach().numpy()
+            # a1 = a1.cpu().detach().numpy()
+            # out = torch.round(out / 2)
+            out = out / 127
+            out = self.relu(out)
         return out,a
 
 
@@ -231,7 +239,9 @@ class ResNet(nn.Module):
 
         if BN:
             self.bn1 = norm_layer(self.inplanes)
-        self.relu = nn.ReLU(inplace=True)
+        self.relu = nn.Hardtanh(min_val=0, max_val=1)
+        # self.relu = nn.ReLU(inplace=True)
+        self.relufc = nn.ReLU(inplace=True)
         #self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block=block, planes=64, blocks=layers[0],qn_on = qn_on,
                  fp_on=fp_on,
@@ -265,7 +275,11 @@ class ResNet(nn.Module):
                  quant_type=quant_type,
                  group_number=group_number,left_shift_bit=left_shift_bit)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.maxpool = nn.MaxPool2d((4,4),4)
+        if (qn_on):
+            self.fc = Linear_quant_noise(qn_on,512 * block.expansion, num_classes,weight_bit=weight_bit, output_bit=output_bit, isint=isint, clamp_std=clamp_std,noise_scale=0)
+        else:
+            self.fc = nn.Linear(512 * block.expansion, num_classes)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -310,7 +324,7 @@ class ResNet(nn.Module):
                  isint=isint, clamp_std=clamp_std,
                  quant_type=quant_type,
                  group_number=group_number, left_shift_bit=left_shift_bit),
-                norm_layer(planes * block.expansion),
+                # norm_layer(planes * block.expansion),
             )
 
         layers = []
@@ -345,10 +359,10 @@ class ResNet(nn.Module):
         # See note [TorchScript super()]
         a['in'] = x
         x = self.conv1(x)
-        a['conv1'] = x
+        # a['conv1'] = x
         if BN:
             x = self.bn1(x)
-            a['bn1'] = x
+            # a['bn1'] = x
         x = self.relu(x)
         a['relu1'] = x
         # x = self.maxpool(x)
@@ -360,13 +374,14 @@ class ResNet(nn.Module):
             x, a[f'layer3_{i}'] = self.layer3[i](x)
         for i in range(0, len(self.layer4)):
             x, a[f'layer4_{i}'] = self.layer4[i](x)
-        x = self.avgpool(x)
-        a['avgpool'] = x
+        x = self.maxpool(x)
+        a['maxpool'] = x
         x = torch.flatten(x, 1)
-        a['flatten'] = x
+        # a['flatten'] = x
         x = self.fc(x)
-        a['fc'] = x
-
+        # a['fc'] = x
+        x = self.relufc(x)
+        a['relufc'] = x
         return x, a
 
     def forward(self, x):
@@ -379,7 +394,7 @@ def _resnet(block, layers, **kwargs):
 
 
 def ResNet18(**kwargs):
-    return _resnet(BasicBlock, [2, 2, 2, 2],**kwargs)
+    return _resnet(BasicBlock, [2, 2, 2, 1],**kwargs)
 
 
 def ResNet34(**kwargs):

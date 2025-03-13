@@ -18,7 +18,7 @@ def main_graph(model_name):
 
     # 遍历每一层的权重
     for layer_name, weights in model_weights.items():
-        if isinstance(weights, torch.Tensor) and len(weights.shape) >= 2:
+        if isinstance(weights, torch.Tensor) and len(weights.shape) >= 2 and layer_name == "layer2.0.conv2.weight":
             # 转换为 NumPy 数组
             weights_np = weights.cpu().numpy()
 
@@ -77,7 +77,7 @@ def main_graph(model_name):
             weight_align_fp = weight_align_fp.cpu().numpy()
             weight_align_fp_out = weight_align_fp_out.cpu().numpy()
 
-            channel_number = weight_reshape.shape[0]
+            channel_number = min(4,weight_reshape.shape[0])
 
             # ====================== 绘制第一幅图 ======================
             # 计算统计信息
@@ -106,6 +106,34 @@ def main_graph(model_name):
                      bbox=dict(facecolor='white', alpha=0.5))
             plt.grid(True)
             plt.savefig(f'weight_distribution_analysis/{model_name}/LayerDistribution_{model_name}_{layer_name}.png')
+            plt.show()
+
+            # 计算统计信息
+            max_val = np.max(weight_align_fp_out)
+            min_val = np.min(weight_align_fp_out)
+            mean_val = np.mean(weight_align_fp_out)
+            std_val = np.std(weight_align_fp_out)
+
+            print(f"Layer: {layer_name}")
+            print(f"Max: {max_val}, Min: {min_val}, Mean: {mean_val}, Std: {std_val}")
+
+            # 绘制整体权重直方图
+            plt.hist(weight_align_fp_out.flatten(), bins=bin_num, alpha=0.7, color='blue')
+            plt.title(f'Overall Distribution of weights in {model_name}')
+            plt.xlabel('Weight Value')
+            plt.ylabel(f'Layer: {layer_name}')
+            # 添加最大值和最小值的垂直线
+            plt.axvline(max_val, color='red', linestyle='dashed', linewidth=1)
+            plt.axvline(min_val, color='green', linestyle='dashed', linewidth=1)
+            # 调整文字的位置和样式
+            text_x = 0.95 * plt.xlim()[1]  # 设置文本的 x 坐标靠近图表的右边
+            text_y = 0.95 * plt.ylim()[1]  # 设置文本的 y 坐标靠近图表的上边
+            plt.text(text_x, text_y,
+                     f"Max: {max_val:.3f}\nMin: {min_val:.3f}\nMean: {mean_val:.3f}\nStd: {std_val:.3f}",
+                     fontsize=10, color='black', ha='right', va='top',
+                     bbox=dict(facecolor='white', alpha=0.5))
+            plt.grid(True)
+            plt.savefig(f'weight_distribution_analysis/{model_name}/LayerDistribution_align_{model_name}_{layer_name}.png')
             plt.show()
 
             if quant_type == 'channel':
@@ -272,19 +300,27 @@ if __name__ == '__main__':
     # main_graph("ResNet18_fp8_hw_group9_epoch30")
     quant_type = "group"
     group_number = 72
-    left_shift_bit = 0
+    left_shift_bit = 3
     n_bits = 3
-    group_number_list = [72, 288]
-    print(f'\n==================== group ====================')
-    for group_number in group_number_list:
-        print(f'\n==================== group_number is {group_number} ====================')
-        name = f"ResNet18_fp8_w_hw_group{group_number}_wo_be_epoch30"
-        main_graph(name)
-    print(f'\n==================== layer ====================')
-    quant_type = "layer"
-    name = f"ResNet18_fp8_w_hw_layer_epoch30"
+    # group_number_list = [72, 288]
+    # name = f"ResNet18_fp8_w_hw_group{group_number}_w_be_epoch30"
+    # main_graph(name)
+    group_number = 72
+    left_shift_bit = 0
+    name = f"ResNet18_fp8_w_hw_group{group_number}_wo_be_epoch30"
     main_graph(name)
-    print(f'\n==================== channel ====================')
-    quant_type = "channel"
-    name = f"ResNet18_fp8_w_hw_channel_epoch30"
+    name = f"ResNet18_fp8_hw_group{group_number}_epoch30"
     main_graph(name)
+    # print(f'\n==================== group ====================')
+    # for group_number in group_number_list:
+    #     print(f'\n==================== group_number is {group_number} ====================')
+    #     name = f"ResNet18_fp8_w_hw_group{group_number}_w_be_epoch30"
+    #     main_graph(name)
+    # print(f'\n==================== layer ====================')
+    # quant_type = "layer"
+    # name = f"ResNet18_fp8_w_hw_layer_epoch30"
+    # main_graph(name)
+    # print(f'\n==================== channel ====================')
+    # quant_type = "channel"
+    # name = f"ResNet18_fp8_w_hw_channel_epoch30"
+    # main_graph(name)
