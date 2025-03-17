@@ -45,12 +45,25 @@ def data_quantization(data_float, half_level=15, scale=None,
     quant_scale = 1 / scale
     return data_quantized, quant_scale
 
+def grad_scale(x, scale):
+    y = x
+    y_grad = x * scale
+    return (y - y_grad).detach() + y_grad
 
+def round_pass(x):
+    y = x.round()
+    y_grad = x
+    return (y - y_grad).detach() + y_grad
+
+def floor_pass(x):
+    y = torch.floor(x)
+    y_grad = x
+    return (y - y_grad).detach() + y_grad
 
 
 def data_quantization_sym(data_float, half_level=15, scale=None,
                           isint=0, clamp_std=0, boundary_refine=False,
-                          reg_shift_mode=True, reg_shift_bits=None):
+                          reg_shift_mode=False, reg_shift_bits=None):
     # isint = 1 -> return quantized values as integer levels
     # isint = 0 -> return quantized values as float numbers with the same range as input
     # reg_shift_mode -> force half_level to be exponent of 2, i.e., half_level = 2^n (n is integer)
@@ -69,11 +82,11 @@ def data_quantization_sym(data_float, half_level=15, scale=None,
         data_float[data_float > (clamp_std * std)] = (clamp_std * std)
 
     if scale == None or scale == 0:
-        scale = abs(data_float).max()
+        scale = data_float.abs().max().detach()  # 动态计算但不参与梯度
 
     if scale == 0:
         return data_float, 1
-
+    shift_bits = 0
     if reg_shift_mode:
         if reg_shift_bits != None:
             quant_scale = 2 ** reg_shift_bits
@@ -81,14 +94,15 @@ def data_quantization_sym(data_float, half_level=15, scale=None,
             shift_bits = np.floor(math.log(1 / scale * half_level, 2))
             quant_scale = 2 ** shift_bits
         if isinstance(data_float, torch.Tensor):
-            data_quantized = torch.floor((data_float * quant_scale))
+            data_quantized = floor_pass((data_float * quant_scale))
         else:
             data_quantized = np.floor((data_float * quant_scale))
         # print(f'quant_scale = {quant_scale}')
         # print(f'reg_shift_bits = {shift_bits}')
     else:
-        data_quantized = (data_float / scale * half_level).round()
+        data_quantized = round_pass(data_float / scale * half_level)
         quant_scale = 1 / scale * half_level
+        shift_bits = 0
 
     if isint == 0:
         data_quantized = data_quantized * scale / half_level
@@ -195,6 +209,8 @@ class Feature_Quant(torch.autograd.Function):
     def backward(ctx, feature_grad):
         return feature_grad, None, None
 
+
+
 # A convolution layer which adds noise and quantize the weight and output feature map
 class Conv2d_quant(nn.Conv2d):
     def __init__(self,
@@ -230,22 +246,20 @@ class Conv2d_quant(nn.Conv2d):
         # quantize weight and add noise first
         if self.qn_on:
             # 先对输入进行量化，放缩到 127 大小
-            x = x * 127
+            x = x * 127.0
             # 然后进行round取整
-            x = x.round()
-
-
-
+            x = round_pass(x)
+            # x = x.round()
             # 对权重进行量化，用整型表示
             weight_q, scale = data_quantization_sym(self.weight, self.weight_half_level, isint=1, clamp_std=self.clamp_std)
+            # 正确做法：量化后的值用浮点表示
+            weight_q = weight_q.to(torch.float32)  # 强制保留浮点类型
             # cout, cin, kernel_height, kernel_width = weight_q.shape
             # 6. 转换为二维形式 KxN
             # K = cin * kernel_height * kernel_width  # K = cin * kernel_height * kernel_width
             # N = cout  # N = cout
             # weights_2d = weight_q.permute(0, 3, 2, 1).reshape(N, K).transpose(1,0).cpu().detach().numpy()
-
             # np.savetxt(f'weight{weight_q.shape}_{weight_q[0][0][0][0]}.csv', weights_2d, delimiter=',')
-
             if self.bias != None:
                 # bias = bias / scale
                 bias_q, _ = data_quantization_sym(self.bias, 127, isint=1, clamp_std=0)
@@ -256,7 +270,6 @@ class Conv2d_quant(nn.Conv2d):
             # x_2d0 = x_np0.reshape(N, -1).transpose(1,0)
             # np.savetxt(f'in{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d0, delimiter=',')
             x = self._conv_forward(x, weight_q, bias_q)
-
             # 对输出的整型结果进行移位
             aver = x.max() #注意不是abs
             if (aver > (127 - 1)):
@@ -265,18 +278,194 @@ class Conv2d_quant(nn.Conv2d):
             else:
                 left_shift = 1
                 post_shift = int(np.ceil(math.log2((127 + 1) / (0.1 + aver))))
-            # x_2d1 = x.reshape(N, -1).transpose(1,0).cpu().detach().numpy()
-            # np.savetxt(f'x_before{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d1, delimiter=',')
-            x = torch.floor(x/(2 ** post_shift))
+            # # x_2d1 = x.reshape(N, -1).transpose(1,0).cpu().detach().numpy()
+            # # np.savetxt(f'x_before{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d1, delimiter=',')
+            x = floor_pass(x/(2 ** post_shift))
+            # # x = torch.floor(x/(2 ** post_shift))
+
             # x_2d = x.reshape(N, -1).transpose(1,0).cpu().detach().numpy()
             # np.savetxt(f'x{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d, delimiter=',')
-
-            x = x / 127
+            x = x / 127.0
         else:
             x = self._conv_forward(x, self.weight, self.bias)
         return x
 
+class Linear_quant_noise(nn.Linear):
+    def __init__(self, qn_on, in_features, out_features,
+                 weight_bit,
+                 output_bit,
+                 isint,
+                 clamp_std,
+                 noise_scale,
+                 bias=False, ):
+        super().__init__(in_features, out_features, bias)
+        self.qn_on = qn_on
+        self.weight_bit = weight_bit
+        self.output_bit = output_bit
+        self.isint = isint
+        self.clamp_std = clamp_std
+        self.noise_scale = noise_scale
+        self.weight_half_level = 2 ** weight_bit / 2 - 1
+        self.output_half_level = 2 ** output_bit / 2 - 1
 
+    def forward(self, x):
+        if self.qn_on:
+            # 先对输入进行量化，放缩到 127 大小
+            x = x * 127.0
+            # 然后进行round取整
+            x = round_pass(x)
+
+            # 对权重进行量化，用整型表示
+            weight_q, scale = data_quantization_sym(self.weight, self.weight_half_level, isint=1, clamp_std=self.clamp_std)
+            # cout, cin = weight_q.shape
+            # N = cout  # N = cout
+            # weights_2d = weight_q.cpu().detach().numpy()
+            #
+            # np.savetxt(f'weight{weight_q.shape}_{weight_q[0][0]}.csv', weights_2d, delimiter=',')
+
+            if self.bias != None:
+                # bias = bias / scale
+                bias_q, _ = data_quantization_sym(self.bias, 127, isint=1, clamp_std=0)
+            else:
+                bias_q = self.bias
+            # calculate the convolution next
+
+            # x_2d0 = x.cpu().detach().numpy()
+            # np.savetxt(f'in{weight_q.shape}_{weight_q[0][0]}.csv', x_2d0, delimiter=',')
+
+            x = F.linear(x, weight_q, bias_q)
+            # 对输出的整型结果进行移位
+            aver = x.max()  # 注意不是abs
+            if (aver > (127 - 1)):
+                left_shift = 0
+                post_shift = int(np.ceil(math.log2(aver / (127 + 1))))
+            else:
+                left_shift = 1
+                post_shift = int(np.ceil(math.log2((127 + 1) / (0.1 + aver))))
+            # x_2d1 = x.cpu().detach().numpy()
+            # np.savetxt(f'x_before{weight_q.shape}_{weight_q[0][0]}.csv', x_2d1, delimiter=',')
+            x = floor_pass(x/(2 ** post_shift))
+            # x_2d = x.cpu().detach().numpy()
+            # np.savetxt(f'x{weight_q.shape}_{weight_q[0][0]}.csv', x_2d, delimiter=',')
+
+            x = x / 127.0
+            # x = Feature_Quant.apply(x, self.output_half_level, self.isint, None)
+        else:
+            x = F.linear(x, self.weight, self.bias)
+
+        return x
+
+class Conv2d_quant_lsq(nn.Conv2d):
+    def __init__(self,
+                 qn_on,
+                 in_channels,
+                 out_channels,
+                 kernel_size,
+                 stride,
+                 padding,
+                 weight_bit,
+                 output_bit,
+                 isint,
+                 clamp_std,
+                 bias,
+                 symmetric=False
+                 ):
+        # weight_bit -> bit level for weight
+        # output_bit -> bit level for output feature map
+        # isint, clamp_std, noise_scale -> same arguments as Weight_Quant_Noise()
+        super().__init__(in_channels,
+                         out_channels,
+                         kernel_size,
+                         stride,
+                         padding,
+                         bias=bias
+                         )
+        self.qn_on = qn_on
+        self.weight_half_level = 2 ** weight_bit / 2 - 1
+        self.output_half_level = 2 ** output_bit / 2 - 1
+        self.isint = isint
+        self.clamp_std = clamp_std
+
+        if symmetric:
+            # signed weight/activation is quantized to [-2^(b-1)+1, 2^(b-1)-1]
+            self.thd_neg_w = - 2 ** (weight_bit - 1) + 1
+            self.thd_pos_w = 2 ** (weight_bit - 1) - 1
+
+            self.thd_neg_o = - 2 ** (output_bit - 1) + 1
+            self.thd_pos_o = 2 ** (output_bit - 1) - 1
+        else:
+            # signed weight/activation is quantized to [-2^(b-1), 2^(b-1)-1]
+            self.thd_neg_w = - 2 ** (weight_bit - 1)
+            self.thd_pos_w = 2 ** (weight_bit - 1) - 1
+
+            self.thd_neg_o = - 2 ** (output_bit - 1)
+            self.thd_pos_o = 2 ** (output_bit - 1) - 1
+        self.s = nn.Parameter(torch.ones(1) * 0.1260)
+
+    def forward(self, x):
+        # quantize weight and add noise first
+        if self.qn_on:
+            # weight量化
+            s_grad_scale = 1.0 / ((self.thd_pos_w * self.weight.numel()) ** 0.5)
+            s = nn.Parameter(self.weight.detach().abs().mean() * 2 / (self.thd_pos_w ** 0.5))
+            s_scale = grad_scale(s, s_grad_scale)
+
+            quantized_weight = self.weight / s_scale
+            quantized_weight = torch.clamp(quantized_weight, self.thd_neg_o, self.thd_pos_o)
+            quantized_weight_int = round_pass(quantized_weight)
+            quantized_weight = quantized_weight_int * s_scale
+            # x量化
+            s_grad_scale = 1.0 / ((self.thd_pos_o * x[0].numel()) ** 0.5)
+            s = nn.Parameter(x.detach().abs().mean() * 2 / (self.thd_pos_o ** 0.5))
+            s_scale = grad_scale(s, s_grad_scale)
+
+            quantized_act = x / s_scale
+            quantized_act = torch.clamp(quantized_act, self.thd_neg_o, self.thd_pos_o)
+            quantized_act_int = round_pass(quantized_act)
+            quantized_act = quantized_act_int * s_scale
+
+            # quantized_weight = self.quan_w_fn(self.weight)
+            # quantized_act = self.quan_a_fn(x)
+            x = self._conv_forward(quantized_act, quantized_weight, self.bias)
+        #     # 先对输入进行量化，放缩到 127 大小
+        #     x = x * 127
+        #     # 然后进行round取整
+        #     x = x.round()
+        #     # 对权重进行量化，用整型表示
+        #     weight_q, scale = data_quantization_sym(self.weight, self.weight_half_level, isint=1, clamp_std=self.clamp_std)
+        #     # cout, cin, kernel_height, kernel_width = weight_q.shape
+        #     # 6. 转换为二维形式 KxN
+        #     # K = cin * kernel_height * kernel_width  # K = cin * kernel_height * kernel_width
+        #     # N = cout  # N = cout
+        #     # weights_2d = weight_q.permute(0, 3, 2, 1).reshape(N, K).transpose(1,0).cpu().detach().numpy()
+        #     # np.savetxt(f'weight{weight_q.shape}_{weight_q[0][0][0][0]}.csv', weights_2d, delimiter=',')
+        #     if self.bias != None:
+        #         # bias = bias / scale
+        #         bias_q, _ = data_quantization_sym(self.bias, 127, isint=1, clamp_std=0)
+        #     else:
+        #         bias_q = self.bias
+        #     # calculate the convolution next
+        #     # x_np0=x.cpu().detach().numpy()
+        #     # x_2d0 = x_np0.reshape(N, -1).transpose(1,0)
+        #     # np.savetxt(f'in{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d0, delimiter=',')
+        #     x = self._conv_forward(x, weight_q, bias_q)
+        #     # 对输出的整型结果进行移位
+        #     aver = x.max() #注意不是abs
+        #     if (aver > (127 - 1)):
+        #         left_shift = 0
+        #         post_shift = int(np.ceil(math.log2(aver / (127 + 1))))
+        #     else:
+        #         left_shift = 1
+        #         post_shift = int(np.ceil(math.log2((127 + 1) / (0.1 + aver))))
+        #     # x_2d1 = x.reshape(N, -1).transpose(1,0).cpu().detach().numpy()
+        #     # np.savetxt(f'x_before{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d1, delimiter=',')
+        #     x = torch.floor(x/(2 ** post_shift))
+        #     # x_2d = x.reshape(N, -1).transpose(1,0).cpu().detach().numpy()
+        #     # np.savetxt(f'x{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d, delimiter=',')
+        #     x = x / 127
+        else:
+            x = self._conv_forward(x, self.weight, self.bias)
+        return x
 # ================================== #
 # Quant Noise Functions
 # ================================== #
@@ -527,70 +716,7 @@ class BNFold_Conv2d_Q(nn.Conv2d):
 
 # A fully connected layer which adds noise and quantize the weight and output feature map
 # See notes in Conv2d_quant_noise
-class Linear_quant_noise(nn.Linear):
-    def __init__(self, qn_on, in_features, out_features,
-                 weight_bit,
-                 output_bit,
-                 isint,
-                 clamp_std,
-                 noise_scale,
-                 bias=False, ):
-        super().__init__(in_features, out_features, bias)
-        self.qn_on = qn_on
-        self.weight_bit = weight_bit
-        self.output_bit = output_bit
-        self.isint = isint
-        self.clamp_std = clamp_std
-        self.noise_scale = noise_scale
-        self.weight_half_level = 2 ** weight_bit / 2 - 1
-        self.output_half_level = 2 ** output_bit / 2 - 1
 
-    def forward(self, x):
-        if self.qn_on:
-            # 先对输入进行量化，放缩到 127 大小
-            x = x * 127
-            # 然后进行round取整
-            x = x.round()
-
-            # 对权重进行量化，用整型表示
-            weight_q, scale = data_quantization_sym(self.weight, self.weight_half_level, isint=1, clamp_std=self.clamp_std)
-            cout, cin = weight_q.shape
-            N = cout  # N = cout
-            weights_2d = weight_q.cpu().detach().numpy()
-
-            np.savetxt(f'weight{weight_q.shape}_{weight_q[0][0]}.csv', weights_2d, delimiter=',')
-
-            if self.bias != None:
-                # bias = bias / scale
-                bias_q, _ = data_quantization_sym(self.bias, 127, isint=1, clamp_std=0)
-            else:
-                bias_q = self.bias
-            # calculate the convolution next
-
-            x_2d0 = x.cpu().detach().numpy()
-            np.savetxt(f'in{weight_q.shape}_{weight_q[0][0]}.csv', x_2d0, delimiter=',')
-
-            x = F.linear(x, weight_q, bias_q)
-            # 对输出的整型结果进行移位
-            aver = x.max()  # 注意不是abs
-            if (aver > (127 - 1)):
-                left_shift = 0
-                post_shift = int(np.ceil(math.log2(aver / (127 + 1))))
-            else:
-                left_shift = 1
-                post_shift = int(np.ceil(math.log2((127 + 1) / (0.1 + aver))))
-            x_2d1 = x.cpu().detach().numpy()
-            np.savetxt(f'x_before{weight_q.shape}_{weight_q[0][0]}.csv', x_2d1, delimiter=',')
-            x = torch.floor(x / (2 ** post_shift))
-            x_2d = x.cpu().detach().numpy()
-            np.savetxt(f'x{weight_q.shape}_{weight_q[0][0]}.csv', x_2d, delimiter=',')
-
-            x = x / 127
-            # x = Feature_Quant.apply(x, self.output_half_level, self.isint, None)
-        else:
-            x = F.linear(x, self.weight, self.bias)
-
-        return x
 
 
 # ================================== #

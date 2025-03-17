@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 import torchvision
 import utils.my_utils as my
 import matplotlib.pyplot as plt  # Import matplotlib
-
+from torch.optim.lr_scheduler import MultiStepLR
 
 
 # ======================================== #
@@ -47,7 +47,7 @@ def main():
     logger = my.setup_logger(name='Logger', log_file=f'logs/{model_name}.log')
     valid_loss_min = np.Inf # track change in validation loss
     accuracy = []
-    lr = 0.01
+    lr = 0.0000001
     counter = 0
     # Initialize lists to store losses and accuracies
     train_losses = []
@@ -128,30 +128,9 @@ def main():
         x = torch.load(PATH_TO_PTH_CHECKPOINT, map_location=device)
         # del x['conv1.weight']
         model.load_state_dict(x, strict=False)
-
-    # 自定义的对称性损失函数
-    def symmetry_loss(weights):
-        mean_value = torch.mean(weights)
-        return torch.abs(mean_value)
-
-    def symmetry_loss_model_min_max(model):
-        loss = 0.0
-        for param in model.parameters():
-            if param.requires_grad:
-                max = torch.max(param)
-                min = torch.min(param)
-                loss += torch.abs(max-min)
-        return loss
-
-    def symmetry_loss_model_mean(model):
-        loss = 0.0
-        for param in model.parameters():
-            if param.requires_grad:
-                mean = torch.mean(param)
-                loss += torch.abs(mean)
-        return loss
-
-    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
+    optimizer = optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=5e-4)
+    # optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
     for epoch in tqdm(range(1, n_epochs+1)):
         # keep track of training and validation loss
         train_loss = 0.0
@@ -159,9 +138,9 @@ def main():
         total_sample = 0
         right_sample = 0
         # 动态调整学习率
-        if counter/10 ==1:
-            counter = 0
-            lr = lr*0.5
+        # if counter/10 ==1:
+        #     counter = 0
+        #     lr = lr*0.5
 
         ###################
         # 训练集的模型 #
@@ -169,28 +148,54 @@ def main():
         model.train() #作用是启用batch normalization和drop out
         for data, target in train_loader:
             data = data.to(device)
+            if img_quant_flag == 1:
+                data, _ = my.data_quantization_sym(data, half_level=127)
             target = target.to(device)
-            # clear the gradients of all optimized variables（清除梯度）
             optimizer.zero_grad()
-
-            # forward pass: compute predicted outputs by passing inputs to the model
-            # (正向传递：通过向模型传递输入来计算预测输出)
             output = model(data)[0].to(device)
-            a = model(data)[1] #（等价于output = model.forward(data).to(device) ）
+            # a = model(data)[1] #（等价于output = model.forward(data).to(device) ）
             # calculate the batch loss（计算损失值）
+            _, pred = torch.max(output, 1)
+            # print(f"pred{pred},target{target}")
             loss = criterion(output, target)
-            # 计算对称性损失
-            sym_loss = symmetry_loss_model_min_max(model)
-            # 总损失
-            total_loss = loss
+            # # 计算对称性损失
+            # sym_loss = symmetry_loss_model_min_max(model)
+            # # 总损失
+            # total_loss = loss
             # backward pass: compute gradient of the loss with respect to model parameters
             # （反向传递：计算损失相对于模型参数的梯度）
             try:
-                total_loss.backward()
+                loss.backward()
             except RuntimeError as e:
                 if 'nan' in str(e):
                     print("NaN detected in loss, skipping update.")
                     continue
+
+            # ⚠️⚠️️打印梯度信息⚠️⚠️
+            def print_grad_stats(model):
+                print("\n===== Gradient Check =====")
+                for name, param in model.named_parameters():
+                    if param.grad is not None:
+                        grad = param.grad.data
+                        print(f"{name}:")
+                        print(f"  Shape: {grad.shape}")
+                        print(f"  Min: {grad.min().item():.6f}")
+                        print(f"  Mean: {grad.mean().item():.6f}")
+                        print(f"  Max: {grad.max().item():.6f}")
+                        print(f"  NaN: {torch.isnan(grad).any().item()}")
+                        ratio = param.grad.norm() / (param.norm() + 1e-8)
+                        print(f"{name}: grad/param = {ratio:.3e}")
+                        # 正常范围：1e-5 ~ 1e-2
+                    else:
+                        print(f"{name}: No gradient")
+
+            # # 在反向传播后添加梯度裁剪
+            # torch.nn.utils.clip_grad_norm_(
+            #     model.parameters(),
+            #     max_norm=1.0,  # 根据实际情况调整
+            #     norm_type=2.0
+            # )
+            # print_grad_stats(model)  # 首次迭代时打印完整梯度
             # perform a single optimization step (parameter update)
             # 执行单个优化步骤（参数更新）
             optimizer.step()
@@ -202,25 +207,35 @@ def main():
         ######################
 
         model.eval()  # 验证模型
-        for data, target in valid_loader:
-            data = data.to(device)
-            target = target.to(device)
-            # forward pass: compute predicted outputs by passing inputs to the model
-            output = model(data)[0].to(device)
+        with torch.no_grad():
+            for data, target in valid_loader:
+                data = data.to(device)
+                target = target.to(device)
+                # forward pass: compute predicted outputs by passing inputs to the model
+                output = model(data)[0].to(device)
+                # convert output probabilities to predicted class(将输出概率转换为预测类)
+                _, pred = torch.max(output, 1)
+                # print(f"pred{output},target{target}")
+                # calculate the batch loss
+                loss = criterion(output, target)
+                # update average validation loss
+                valid_loss += loss.item()*data.size(0)
 
-            # calculate the batch loss
-            loss = criterion(output, target)
-            # update average validation loss
-            valid_loss += loss.item()*data.size(0)
-            # convert output probabilities to predicted class(将输出概率转换为预测类)
-            _, pred = torch.max(output, 1)
-            # compare predictions to true label(将预测与真实标签进行比较)
-            correct_tensor = pred.eq(target.data.view_as(pred))
-            # correct = np.squeeze(correct_tensor.to(device).numpy())
-            total_sample += batch_size
-            for i in correct_tensor:
-                if i:
-                    right_sample += 1
+                # compare predictions to true label(将预测与真实标签进行比较)
+                correct_tensor = pred.eq(target.data.view_as(pred))
+                # correct = np.squeeze(correct_tensor.to(device).numpy())
+                total_sample += batch_size
+                for i in correct_tensor:
+                    if i:
+                        right_sample += 1
+
+        # 在每个 epoch 结束后调用学习率调度器
+        scheduler.step()
+
+        # 打印当前学习率
+        current_lr = scheduler.get_last_lr()[0]
+        print(f"Epoch {epoch}, Current Learning Rate: {current_lr}")
+
         print("Accuracy:",100*right_sample/total_sample,"%")
         accuracy.append(right_sample/total_sample)
 
@@ -253,10 +268,12 @@ def main():
                 else:
                     items.append((new_key, v))
             return dict(items)
+        a = []
         a_b = a
-        a = flatten_dict(a_b)
+
         tags = ["train_loss", "val_loss", "Accuracy"]
         if SAVE_TB is True:
+            a = flatten_dict(a_b)
             tb_writer.add_scalar(tags[0], train_loss, epoch)
             tb_writer.add_scalar(tags[1], valid_loss, epoch)
             tb_writer.add_scalar(tags[2], accuracy[-1], epoch)
