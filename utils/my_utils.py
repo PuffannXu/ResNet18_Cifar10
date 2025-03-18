@@ -63,7 +63,7 @@ def floor_pass(x):
 
 def data_quantization_sym(data_float, half_level=15, scale=None,
                           isint=0, clamp_std=0, boundary_refine=False,
-                          reg_shift_mode=False, reg_shift_bits=None):
+                          reg_shift_mode=True, reg_shift_bits=None):
     # isint = 1 -> return quantized values as integer levels
     # isint = 0 -> return quantized values as float numbers with the same range as input
     # reg_shift_mode -> force half_level to be exponent of 2, i.e., half_level = 2^n (n is integer)
@@ -82,7 +82,7 @@ def data_quantization_sym(data_float, half_level=15, scale=None,
         data_float[data_float > (clamp_std * std)] = (clamp_std * std)
 
     if scale == None or scale == 0:
-        scale = data_float.abs().max().detach()  # 动态计算但不参与梯度
+        scale = data_float.abs().max().detach() + 1e-8 # 动态计算但不参与梯度
 
     if scale == 0:
         return data_float, 1
@@ -110,107 +110,6 @@ def data_quantization_sym(data_float, half_level=15, scale=None,
 
     return data_quantized, shift_bits
 
-
-# Add noise to input data
-def add_noise(weight, method='add', n_scale=0.074, n_range='max'):
-    # weight -> input data, usually a weight
-    # method ->
-    #   'add' -> add a Gaussian noise to the weight, preferred method
-    #   'mul' -> multiply a noise factor to the weight, rarely used
-    # n_scale -> noise factor
-    # n_range ->
-    #   'max' -> use maximum range of weight times the n_scale as the noise std, preferred method
-    #   'std' -> use weight std times the n_scale as the noise std, rarely used
-    std = weight.std()
-    w_range = weight.max() - weight.min()
-
-    if n_range == 'max':
-        factor = w_range
-    if n_range == 'std':
-        factor = std
-
-    if method == 'add':
-        w_noise = factor * n_scale * torch.randn_like(weight)
-        weight_noise = weight + w_noise
-    if method == 'mul':
-        w_noise = torch.randn_like(weight) * n_scale + 1
-        weight_noise = weight * w_noise
-    return weight_noise
-
-
-# ================================== #
-# Autograd Functions
-# ================================== #
-class Round_Grad(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, i):
-        result = i.round()
-        # ctx.save_for_backward(result)
-        return result
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return grad_output
-
-# ================================== #
-# Quant Functions
-# ================================== #
-class Weight_Quant(torch.autograd.Function):
-    # Number of inputs (excluding ctx, only weight, bias, half_level, isint, clamp_std, noise_scale)
-    # for forward need to be the same as the number of return in def backward()
-    # (return weight_grad, bias_grad, None, None, None, None)
-    @staticmethod
-    def forward(ctx, weight, bias, half_level, isint, clamp_std):
-        # weight -> input weight
-        # bias -> input bias
-        # half_level -> quantization level
-        # isint -> return int (will result in scaling) or float (same scale)
-        # clamp_std -> clamp weight to [- std * clamp_std, std * clamp_std]
-        # noise_scale -> noise scale, equantion can be found in add_noise()
-        ctx.save_for_backward()
-
-        std = weight.std()
-        if clamp_std != 0:
-            weight = torch.clamp(weight, min=-clamp_std * std, max=clamp_std * std)
-
-        # log down the max scale for input weight
-        scale_in = abs(weight).max()
-
-        # log down the max scale for input weight
-        weight, scale = data_quantization_sym(weight, half_level, scale=scale_in,
-                                              isint=isint, clamp_std=0)
-
-        # No need for bias quantization, since the bias is added to the feature map on CPU (or GPU)
-        if bias != None:
-            # bias = bias / scale
-            bias, _ = data_quantization_sym(bias, 127,
-                                            isint=isint, clamp_std=0)
-            # bias = add_noise(bias, n_scale=noise_scale)
-
-        return weight, bias
-
-    # Use default gradiant to train the network
-    # Number of inputs (excluding ctx, only weight_grad, bias_grad) for backward need to be the same as the
-    # number of return in def forward() (return weight, bias)
-    @staticmethod
-    def backward(ctx, weight_grad, bias_grad):
-        return weight_grad, bias_grad, None, None, None, None
-
-class Feature_Quant(torch.autograd.Function):
-
-    @staticmethod
-    def forward(ctx, feature, half_level, isint, scale):
-        # feature_q, _ = data_quantization_sym(feature, half_level, scale = None, isint = isint, clamp_std = 0)
-        feature_q, shift_bits= data_quantization_sym(feature, half_level, isint=isint, scale=scale)
-        # print(shift_bits)
-        return feature_q
-
-    @staticmethod
-    def backward(ctx, feature_grad):
-        return feature_grad, None, None
-
-
-
 # A convolution layer which adds noise and quantize the weight and output feature map
 class Conv2d_quant(nn.Conv2d):
     def __init__(self,
@@ -225,6 +124,7 @@ class Conv2d_quant(nn.Conv2d):
                  isint,
                  clamp_std,
                  bias,
+                 shift_mode = False
                  ):
         # weight_bit -> bit level for weight
         # output_bit -> bit level for output feature map
@@ -241,17 +141,18 @@ class Conv2d_quant(nn.Conv2d):
         self.output_half_level = 2 ** output_bit / 2 - 1
         self.isint = isint
         self.clamp_std = clamp_std
+        self.shift_mode = shift_mode
 
     def forward(self, x):
         # quantize weight and add noise first
         if self.qn_on:
             # 先对输入进行量化，放缩到 127 大小
-            x = x * 127.0
+            x = x * 127.0 + torch.randn_like(x)
             # 然后进行round取整
             x = round_pass(x)
             # x = x.round()
             # 对权重进行量化，用整型表示
-            weight_q, scale = data_quantization_sym(self.weight, self.weight_half_level, isint=1, clamp_std=self.clamp_std)
+            weight_q, scale = data_quantization_sym(self.weight, self.weight_half_level, isint=1, clamp_std=self.clamp_std,reg_shift_mode=self.shift_mode)
             # 正确做法：量化后的值用浮点表示
             weight_q = weight_q.to(torch.float32)  # 强制保留浮点类型
             # cout, cin, kernel_height, kernel_width = weight_q.shape
@@ -262,7 +163,7 @@ class Conv2d_quant(nn.Conv2d):
             # np.savetxt(f'weight{weight_q.shape}_{weight_q[0][0][0][0]}.csv', weights_2d, delimiter=',')
             if self.bias != None:
                 # bias = bias / scale
-                bias_q, _ = data_quantization_sym(self.bias, 127, isint=1, clamp_std=0)
+                bias_q, _ = data_quantization_sym(self.bias, 127, isint=1, clamp_std=0,reg_shift_mode=self.shift_mode)
             else:
                 bias_q = self.bias
             # calculate the convolution next
@@ -271,20 +172,21 @@ class Conv2d_quant(nn.Conv2d):
             # np.savetxt(f'in{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d0, delimiter=',')
             x = self._conv_forward(x, weight_q, bias_q)
             # 对输出的整型结果进行移位
-            aver = x.max() #注意不是abs
-            if (aver > (127 - 1)):
-                left_shift = 0
-                post_shift = int(np.ceil(math.log2(aver / (127 + 1))))
+            if self.shift_mode:
+                aver = x.max() #注意不是abs
+                if (aver > (127 - 1)):
+                    left_shift = 0
+                    post_shift = int(np.ceil(math.log2(aver / (127 + 1))))
+                else:
+                    left_shift = 1
+                    post_shift = int(np.ceil(math.log2((127 + 1) / (0.1 + aver))))
+                # # x_2d1 = x.reshape(N, -1).transpose(1,0).cpu().detach().numpy()
+                # # np.savetxt(f'x_before{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d1, delimiter=',')
+                x = floor_pass(x/(2 ** post_shift))
             else:
-                left_shift = 1
-                post_shift = int(np.ceil(math.log2((127 + 1) / (0.1 + aver))))
-            # # x_2d1 = x.reshape(N, -1).transpose(1,0).cpu().detach().numpy()
-            # # np.savetxt(f'x_before{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d1, delimiter=',')
-            x = floor_pass(x/(2 ** post_shift))
-            # # x = torch.floor(x/(2 ** post_shift))
+                scale = x.abs().max().detach()
+                x = round_pass(x / scale * 127)
 
-            # x_2d = x.reshape(N, -1).transpose(1,0).cpu().detach().numpy()
-            # np.savetxt(f'x{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d, delimiter=',')
             x = x / 127.0
         else:
             x = self._conv_forward(x, self.weight, self.bias)
@@ -297,7 +199,8 @@ class Linear_quant_noise(nn.Linear):
                  isint,
                  clamp_std,
                  noise_scale,
-                 bias=False, ):
+                 bias=False,
+                 shift_mode=False):
         super().__init__(in_features, out_features, bias)
         self.qn_on = qn_on
         self.weight_bit = weight_bit
@@ -307,6 +210,7 @@ class Linear_quant_noise(nn.Linear):
         self.noise_scale = noise_scale
         self.weight_half_level = 2 ** weight_bit / 2 - 1
         self.output_half_level = 2 ** output_bit / 2 - 1
+        self.shift_mode = shift_mode
 
     def forward(self, x):
         if self.qn_on:
@@ -316,7 +220,7 @@ class Linear_quant_noise(nn.Linear):
             x = round_pass(x)
 
             # 对权重进行量化，用整型表示
-            weight_q, scale = data_quantization_sym(self.weight, self.weight_half_level, isint=1, clamp_std=self.clamp_std)
+            weight_q, scale = data_quantization_sym(self.weight, self.weight_half_level, isint=1, clamp_std=self.clamp_std, reg_shift_mode=self.shift_mode)
             # cout, cin = weight_q.shape
             # N = cout  # N = cout
             # weights_2d = weight_q.cpu().detach().numpy()
@@ -334,19 +238,21 @@ class Linear_quant_noise(nn.Linear):
             # np.savetxt(f'in{weight_q.shape}_{weight_q[0][0]}.csv', x_2d0, delimiter=',')
 
             x = F.linear(x, weight_q, bias_q)
-            # 对输出的整型结果进行移位
-            aver = x.max()  # 注意不是abs
-            if (aver > (127 - 1)):
-                left_shift = 0
-                post_shift = int(np.ceil(math.log2(aver / (127 + 1))))
+
+            if self.shift_mode:
+                aver = x.max()  # 注意不是abs
+                if (aver > (127 - 1)):
+                    left_shift = 0
+                    post_shift = int(np.ceil(math.log2(aver / (127 + 1))))
+                else:
+                    left_shift = 1
+                    post_shift = int(np.ceil(math.log2((127 + 1) / (0.1 + aver))))
+                # # x_2d1 = x.reshape(N, -1).transpose(1,0).cpu().detach().numpy()
+                # # np.savetxt(f'x_before{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d1, delimiter=',')
+                x = floor_pass(x / (2 ** post_shift))
             else:
-                left_shift = 1
-                post_shift = int(np.ceil(math.log2((127 + 1) / (0.1 + aver))))
-            # x_2d1 = x.cpu().detach().numpy()
-            # np.savetxt(f'x_before{weight_q.shape}_{weight_q[0][0]}.csv', x_2d1, delimiter=',')
-            x = floor_pass(x/(2 ** post_shift))
-            # x_2d = x.cpu().detach().numpy()
-            # np.savetxt(f'x{weight_q.shape}_{weight_q[0][0]}.csv', x_2d, delimiter=',')
+                scale = x.abs().max().detach()
+                x = round_pass(x / scale * 127)
 
             x = x / 127.0
             # x = Feature_Quant.apply(x, self.output_half_level, self.isint, None)
@@ -354,6 +260,8 @@ class Linear_quant_noise(nn.Linear):
             x = F.linear(x, self.weight, self.bias)
 
         return x
+
+
 
 class Conv2d_quant_lsq(nn.Conv2d):
     def __init__(self,
@@ -512,6 +420,105 @@ class Weight_Quant_Noise(torch.autograd.Function):
     @staticmethod
     def backward(ctx, weight_grad, bias_grad):
         return weight_grad, bias_grad, None, None, None, None
+
+# Add noise to input data
+def add_noise(weight, method='add', n_scale=0.074, n_range='max'):
+    # weight -> input data, usually a weight
+    # method ->
+    #   'add' -> add a Gaussian noise to the weight, preferred method
+    #   'mul' -> multiply a noise factor to the weight, rarely used
+    # n_scale -> noise factor
+    # n_range ->
+    #   'max' -> use maximum range of weight times the n_scale as the noise std, preferred method
+    #   'std' -> use weight std times the n_scale as the noise std, rarely used
+    std = weight.std()
+    w_range = weight.max() - weight.min()
+
+    if n_range == 'max':
+        factor = w_range
+    if n_range == 'std':
+        factor = std
+
+    if method == 'add':
+        w_noise = factor * n_scale * torch.randn_like(weight)
+        weight_noise = weight + w_noise
+    if method == 'mul':
+        w_noise = torch.randn_like(weight) * n_scale + 1
+        weight_noise = weight * w_noise
+    return weight_noise
+
+
+# ================================== #
+# Autograd Functions
+# ================================== #
+class Round_Grad(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, i):
+        result = i.round()
+        # ctx.save_for_backward(result)
+        return result
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output
+
+# ================================== #
+# Quant Functions
+# ================================== #
+class Weight_Quant(torch.autograd.Function):
+    # Number of inputs (excluding ctx, only weight, bias, half_level, isint, clamp_std, noise_scale)
+    # for forward need to be the same as the number of return in def backward()
+    # (return weight_grad, bias_grad, None, None, None, None)
+    @staticmethod
+    def forward(ctx, weight, bias, half_level, isint, clamp_std):
+        # weight -> input weight
+        # bias -> input bias
+        # half_level -> quantization level
+        # isint -> return int (will result in scaling) or float (same scale)
+        # clamp_std -> clamp weight to [- std * clamp_std, std * clamp_std]
+        # noise_scale -> noise scale, equantion can be found in add_noise()
+        ctx.save_for_backward()
+
+        std = weight.std()
+        if clamp_std != 0:
+            weight = torch.clamp(weight, min=-clamp_std * std, max=clamp_std * std)
+
+        # log down the max scale for input weight
+        scale_in = abs(weight).max()
+
+        # log down the max scale for input weight
+        weight, scale = data_quantization_sym(weight, half_level, scale=scale_in,
+                                              isint=isint, clamp_std=0)
+
+        # No need for bias quantization, since the bias is added to the feature map on CPU (or GPU)
+        if bias != None:
+            # bias = bias / scale
+            bias, _ = data_quantization_sym(bias, 127,
+                                            isint=isint, clamp_std=0)
+            # bias = add_noise(bias, n_scale=noise_scale)
+
+        return weight, bias
+
+    # Use default gradiant to train the network
+    # Number of inputs (excluding ctx, only weight_grad, bias_grad) for backward need to be the same as the
+    # number of return in def forward() (return weight, bias)
+    @staticmethod
+    def backward(ctx, weight_grad, bias_grad):
+        return weight_grad, bias_grad, None, None, None, None
+
+class Feature_Quant(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, feature, half_level, isint, scale):
+        # feature_q, _ = data_quantization_sym(feature, half_level, scale = None, isint = isint, clamp_std = 0)
+        feature_q, shift_bits= data_quantization_sym(feature, half_level, isint=isint, scale=scale)
+        # print(shift_bits)
+        return feature_q
+
+    @staticmethod
+    def backward(ctx, feature_grad):
+        return feature_grad, None, None
+
 
 
 class Feature_Quant_noise(torch.autograd.Function):

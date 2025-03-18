@@ -22,10 +22,6 @@ isint = 1
 qn_on = 0
 left_shift_bit = 0
 
-SAVE_TB = False
-
-
-
 clamp_std = 0
 noise_scale = 0
 channel_number = 4
@@ -58,14 +54,6 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"\n=========================== run on {device} ===========================")
 
-    if SAVE_TB:
-        # ======================================== #
-        # 实例化SummaryWriter对象
-        # ======================================== #
-        print('Start Tensorboard with "tensorboard --logdir=runs", view at http://localhost:6006/')
-        tb_writer = SummaryWriter(log_dir='/'.join(["output","tensorboard", model_name]))
-    # 读数据
-
     print(f"        ...... batch size is {batch_size}, loading data ......")
     train_loader,valid_loader,test_loader = read_dataset(batch_size=batch_size,pic_path='/home/project/Resnet18/dataset/')
     # 加载模型(使用预处理模型，修改最后一层，固定之前的权重)
@@ -96,30 +84,12 @@ def main():
                                   weight_bit=weight_bit, output_bit=output_bit, isint=isint, clamp_std=clamp_std)
     else:
         model.conv1 = nn.Conv2d(in_channels=channel_number, out_channels=64, kernel_size=3, stride=1, padding=1, bias=False)
+    model.fc = torch.nn.Linear(512, n_class)  # 将最后的全连接层改掉
+    # if (qn_on):
+    #     model.fc = my.Linear_quant_noise(qn_on,512, n_class,weight_bit=weight_bit, output_bit=output_bit, isint=isint, clamp_std=clamp_std,noise_scale=0)
+    # else:
+    #     model.fc = torch.nn.Linear(512, n_class) # 将最后的全连接层改掉
 
-    if (qn_on):
-        model.fc = my.Linear_quant_noise(qn_on,512, n_class,weight_bit=weight_bit, output_bit=output_bit, isint=isint, clamp_std=clamp_std,noise_scale=0)
-    else:
-        model.fc = torch.nn.Linear(512, n_class) # 将最后的全连接层改掉
-
-    # for m in model.modules():
-    #     if isinstance(m, nn.Linear):
-    #         nn.init.uniform_(m.weight, -1, 1)
-    #         nn.init.constant_(m.bias, 0)
-        # elif isinstance(m, nn.Conv2d):
-        #     nn.init.uniform_(m.weight, 0, 0.1)
-        #     if m.bias is not None:
-        #         nn.init.constant_(m.bias, 0)
-    # Initialize weights using fp8e4m3 distribution
-    # with torch.no_grad():
-    #     for name, param in model.named_parameters():
-    #         # param.uniform_(-448, 448)
-    #         torch.nn.init.normal_(param, mean=0, std=1)
-    #         # param.data = my.initialize_weights_fp8e4m3(param.data.shape)
-    #         plt.hist(param.cpu().numpy().flatten(), bins=50)
-    #         plt.title(f"Distribution of {name}")
-    #         plt.show()
-            # break  # 只显示一个参数的分布
     model = model.to(device)
     # 使用交叉熵损失函数
     criterion = nn.CrossEntropyLoss().to(device)
@@ -130,7 +100,9 @@ def main():
         model.load_state_dict(x, strict=False)
     optimizer = optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.999), eps=1e-08, weight_decay=5e-4)
     # optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs)
+    # scheduler = optim.lr_scheduler.CyclicLR(optimizer, base_lr=lr*0.1, max_lr=lr, step_size_up=5)
     for epoch in tqdm(range(1, n_epochs+1)):
         # keep track of training and validation loss
         train_loss = 0.0
@@ -141,7 +113,6 @@ def main():
         # if counter/10 ==1:
         #     counter = 0
         #     lr = lr*0.5
-
         ###################
         # 训练集的模型 #
         ###################
@@ -259,69 +230,6 @@ def main():
             counter = 0
         else:
             counter += 1
-        def flatten_dict(d, parent_key='', sep='_'):
-            items = []
-            for k, v in d.items():
-                new_key = parent_key + sep + k if parent_key else k
-                if isinstance(v, dict):
-                    items.extend(flatten_dict(v, new_key, sep=sep).items())
-                else:
-                    items.append((new_key, v))
-            return dict(items)
-        a = []
-        a_b = a
-
-        tags = ["train_loss", "val_loss", "Accuracy"]
-        if SAVE_TB is True:
-            a = flatten_dict(a_b)
-            tb_writer.add_scalar(tags[0], train_loss, epoch)
-            tb_writer.add_scalar(tags[1], valid_loss, epoch)
-            tb_writer.add_scalar(tags[2], accuracy[-1], epoch)
-
-            weights_keys = model.state_dict().keys()
-            for key in weights_keys:
-                weight_t = model.state_dict()[key].cpu()
-                tb_writer.add_histogram(tag=key, values=weight_t, global_step=epoch)
-                if weight_t.dim() == 4:
-                    c_out, c_in, k_w, k_h = weight_t.shape
-                    for o_idx in range(c_out):
-                        kernel_idx = weight_t[o_idx, :, :, :].unsqueeze(1)
-                        kernel_grid = torchvision.utils.make_grid(kernel_idx, nrow=8, normalize=True, scale_each=True)
-                        tb_writer.add_image(f'{key}_split_cin', kernel_grid, global_step=o_idx)
-                elif weight_t.dim() == 2:
-                    weight_t = weight_t.unsqueeze(0)
-                    tb_writer.add_image(f'{key}_split_cin', weight_t)
-                elif weight_t.dim() == 1:
-                    weight_t = weight_t.unsqueeze(0)
-                    weight_t = weight_t.unsqueeze(0)
-                    tb_writer.add_image(f'{key}_split_cin', weight_t)
-                # kernel_all = weight_t.view(-1,c_in,k_h, k_w)
-                # kernel_grid = torchvision.utils.make_grid(kernel_all, nrow=8, normalize=False, scale_each= False)
-                # tb_writer.add_image(f'{key}_all', kernel_grid)
-
-            for key in a:
-                # im = np.squeeze(a[key].cpu().detach().numpy())
-                im = a[key].cpu().detach()
-
-                # [C, H, W] -> [H, W, C]
-                # im = np.transpose(im, [1, 2, 0])
-                tb_writer.add_histogram(tag=key,
-                                        values=im,
-                                        global_step=epoch)
-                if im.dim() == 4:
-                    c_out, c_in, k_w, k_h = im.shape
-                    for o_idx in range(c_out):
-                        im_idx = im[o_idx, :, :, :].unsqueeze(1)
-                        im_grid = torchvision.utils.make_grid(im_idx, nrow=8, normalize=True, scale_each=True)
-                        tb_writer.add_image(f'{key}_split_cin', im_grid, global_step=o_idx)
-                elif im.dim() == 2:
-                    im = im.unsqueeze(0)
-                    tb_writer.add_image(f'{key}_split_cin', im)
-                elif im.dim() == 1:
-                    im = im.unsqueeze(0)
-                    im = im.unsqueeze(0)
-                    tb_writer.add_image(f'{key}_split_cin', im)
-
 
     # Plotting after training
     plt.figure(figsize=(15, 5))
@@ -358,9 +266,9 @@ if __name__ == '__main__':
     weight_bit = 8
     output_bit = 8
     left_shift_bit = 0
-    n_epochs = 200
+    n_epochs = 20
     RELOAD_CHECKPOINT = 1
-    PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp32_ch{channel_number}_4_newrelu.pt'#checkpoint/ResNet18_fp32_ch{channel_number}_3.pt'
+    PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_I8W8_ch{channel_number}_4_newrelu.pt'#checkpoint/ResNet18_fp32_ch{channel_number}_3.pt'
     # PATH_TO_PTH_CHECKPOINT = f'checkpoint/{model_name}.pt'
 
 
