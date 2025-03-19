@@ -147,7 +147,7 @@ class Conv2d_quant(nn.Conv2d):
         # quantize weight and add noise first
         if self.qn_on:
             # 先对输入进行量化，放缩到 127 大小
-            x = x * 127.0 + torch.randn_like(x)
+            x = x * self.output_half_level + torch.randn_like(x)
             # 然后进行round取整
             x = round_pass(x)
             # x = x.round()
@@ -163,7 +163,7 @@ class Conv2d_quant(nn.Conv2d):
             # np.savetxt(f'weight{weight_q.shape}_{weight_q[0][0][0][0]}.csv', weights_2d, delimiter=',')
             if self.bias != None:
                 # bias = bias / scale
-                bias_q, _ = data_quantization_sym(self.bias, 127, isint=1, clamp_std=0,reg_shift_mode=self.shift_mode)
+                bias_q, _ = data_quantization_sym(self.bias, self.weight_half_level, isint=1, clamp_std=0,reg_shift_mode=self.shift_mode)
             else:
                 bias_q = self.bias
             # calculate the convolution next
@@ -174,20 +174,15 @@ class Conv2d_quant(nn.Conv2d):
             # 对输出的整型结果进行移位
             if self.shift_mode:
                 aver = x.max() #注意不是abs
-                if (aver > (127 - 1)):
-                    left_shift = 0
-                    post_shift = int(np.ceil(math.log2(aver / (127 + 1))))
-                else:
-                    left_shift = 1
-                    post_shift = int(np.ceil(math.log2((127 + 1) / (0.1 + aver))))
+                post_shift = int(np.ceil(math.log2((self.output_half_level + 1) / (0.1 + aver))))
                 # # x_2d1 = x.reshape(N, -1).transpose(1,0).cpu().detach().numpy()
                 # # np.savetxt(f'x_before{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d1, delimiter=',')
                 x = floor_pass(x/(2 ** post_shift))
             else:
                 scale = x.abs().max().detach()
-                x = round_pass(x / scale * 127)
+                x = round_pass(x / scale * self.output_half_level)
 
-            x = x / 127.0
+            x = x / self.output_half_level
         else:
             x = self._conv_forward(x, self.weight, self.bias)
         return x
@@ -215,7 +210,7 @@ class Linear_quant_noise(nn.Linear):
     def forward(self, x):
         if self.qn_on:
             # 先对输入进行量化，放缩到 127 大小
-            x = x * 127.0
+            x = x * self.output_half_level
             # 然后进行round取整
             x = round_pass(x)
 
@@ -229,7 +224,7 @@ class Linear_quant_noise(nn.Linear):
 
             if self.bias != None:
                 # bias = bias / scale
-                bias_q, _ = data_quantization_sym(self.bias, 127, isint=1, clamp_std=0)
+                bias_q, _ = data_quantization_sym(self.bias, self.weight_half_level, isint=1, clamp_std=0,reg_shift_mode=self.shift_mode)
             else:
                 bias_q = self.bias
             # calculate the convolution next
@@ -241,20 +236,20 @@ class Linear_quant_noise(nn.Linear):
 
             if self.shift_mode:
                 aver = x.max()  # 注意不是abs
-                if (aver > (127 - 1)):
+                if (aver > (self.output_half_level - 1)):
                     left_shift = 0
-                    post_shift = int(np.ceil(math.log2(aver / (127 + 1))))
+                    post_shift = int(np.ceil(math.log2(aver / (self.output_half_level + 1))))
                 else:
                     left_shift = 1
-                    post_shift = int(np.ceil(math.log2((127 + 1) / (0.1 + aver))))
+                    post_shift = int(np.ceil(math.log2((self.output_half_level + 1) / (0.1 + aver))))
                 # # x_2d1 = x.reshape(N, -1).transpose(1,0).cpu().detach().numpy()
                 # # np.savetxt(f'x_before{weight_q.shape}_{weight_q[0][0][0][0]}.csv', x_2d1, delimiter=',')
                 x = floor_pass(x / (2 ** post_shift))
             else:
                 scale = x.abs().max().detach()
-                x = round_pass(x / scale * 127)
+                x = round_pass(x / scale * self.output_half_level)
 
-            x = x / 127.0
+            x = x / self.output_half_level
             # x = Feature_Quant.apply(x, self.output_half_level, self.isint, None)
         else:
             x = F.linear(x, self.weight, self.bias)

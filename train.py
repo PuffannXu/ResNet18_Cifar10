@@ -268,13 +268,14 @@ if __name__ == '__main__':
     left_shift_bit = 0
     n_epochs = 20
     RELOAD_CHECKPOINT = 1
-    PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_I8W8_ch{channel_number}_4_newrelu.pt'#checkpoint/ResNet18_fp32_ch{channel_number}_3.pt'
+    batch_size = 32
+    PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp32_ch{channel_number}_4_newrelu.pt'#checkpoint/ResNet18_fp32_ch{channel_number}_3.pt'
     # PATH_TO_PTH_CHECKPOINT = f'checkpoint/{model_name}.pt'
 
 
     fp_on = 0  # 0:off 1:wo hw 2:hw
     quant_type = "layer"  # "layer" "channel" "group"
     group_number = 72
-    model_name = f"ResNet18_I8W8_ch{channel_number}_4_newrelu"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    model_name = f"ResNet18_I8W8_ch{channel_number}_5_newrelu"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
     main()
 
