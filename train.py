@@ -159,7 +159,6 @@ def main():
                         # 正常范围：1e-5 ~ 1e-2
                     else:
                         print(f"{name}: No gradient")
-
             # # 在反向传播后添加梯度裁剪
             # torch.nn.utils.clip_grad_norm_(
             #     model.parameters(),
