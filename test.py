@@ -251,8 +251,8 @@ if __name__ == '__main__':
     # group_number = 288
     # print(model_name)
     # main()
-    model_name = f"ResNet18_I8W8_ch{channel_number}_4_newrelu"#f"ResNet18_I8W8_ch{channel_number}_4"
-    qn_on =  1
+    model_name = f"ResNet18_I8W8_ch{channel_number}_5_newrelu"#f"ResNet18_I8W8_ch{channel_number}_4"
+    qn_on = 1
     fp_on = 0
     img_quant_flag = qn_on
     input_bit, weight_bit, output_bit = 8, 8, 8
