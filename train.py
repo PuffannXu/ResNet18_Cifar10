@@ -43,7 +43,6 @@ def main():
     logger = my.setup_logger(name='Logger', log_file=f'logs/{model_name}.log')
     valid_loss_min = np.Inf # track change in validation loss
     accuracy = []
-    lr = 0.0000001
     counter = 0
     # Initialize lists to store losses and accuracies
     train_losses = []
@@ -258,23 +257,24 @@ def main():
     plt.show()
 
 if __name__ == '__main__':
-    img_quant_flag = 1
+    img_quant_flag = 0
     isint = 0
-    qn_on = 1
+    qn_on = 0
     input_bit = 8
     weight_bit = 8
     output_bit = 8
-    left_shift_bit = 0
-    n_epochs = 20
+    left_shift_bit = 3
+    n_epochs = 200
+    lr = 0.00005
     RELOAD_CHECKPOINT = 1
-    batch_size = 32
-    PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp32_ch{channel_number}_4_newrelu.pt'#checkpoint/ResNet18_fp32_ch{channel_number}_3.pt'
+    batch_size = 128
+    PATH_TO_PTH_CHECKPOINT = f'checkpoint/ResNet18_fp8_ch{channel_number}_4_newrelu.pt'#checkpoint/ResNet18_fp32_ch{channel_number}_3.pt'
     # PATH_TO_PTH_CHECKPOINT = f'checkpoint/{model_name}.pt'
 
 
-    fp_on = 0  # 0:off 1:wo hw 2:hw
-    quant_type = "layer"  # "layer" "channel" "group"
+    fp_on = 2  # 0:off 1:wo hw 2:hw
+    quant_type = "group"  # "layer" "channel" "group"
     group_number = 72
-    model_name = f"ResNet18_I8W8_ch{channel_number}_5_newrelu"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
+    model_name = f"ResNet18_fp8_hw_ch{channel_number}_4_newrelu"#f'ResNet18_fp8_hw_{quant_type}{group_number}'
     main()
 

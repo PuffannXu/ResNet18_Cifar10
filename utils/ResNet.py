@@ -86,7 +86,7 @@ class BasicBlock(nn.Module):
                  group_number=group_number, left_shift_bit=left_shift_bit)
         if BN:
             self.bn1 = norm_layer(planes)
-        self.relu = nn.Hardtanh(min_val=0, max_val=1)
+        self.relu = nn.Hardtanh(min_val=0, max_val=448)
         # self.relu = nn.ReLU(inplace=True)
         self.conv2 = conv3x3(planes, planes, qn_on = qn_on,
                  fp_on=fp_on,
@@ -239,7 +239,7 @@ class ResNet(nn.Module):
 
         if BN:
             self.bn1 = norm_layer(self.inplanes)
-        self.relu = nn.Hardtanh(min_val=0, max_val=1)
+        self.relu = nn.Hardtanh(min_val=0, max_val=448)
         # self.relu = nn.ReLU(inplace=True)
         self.relufc = nn.ReLU(inplace=True)
         #self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -357,14 +357,14 @@ class ResNet(nn.Module):
     def _forward_impl(self, x):
         a = {}
         # See note [TorchScript super()]
-        a['in'] = x
+        a['in'] = x.cpu().detach().numpy()
         x = self.conv1(x)
         # a['conv1'] = x
         if BN:
             x = self.bn1(x)
             # a['bn1'] = x
         x = self.relu(x)
-        a['relu1'] = x
+        a['relu1'] = x.cpu().detach().numpy()
         # x = self.maxpool(x)
         for i in range(0,len(self.layer1)):
             x, a[f'layer1_{i}'] = self.layer1[i](x)
@@ -375,13 +375,13 @@ class ResNet(nn.Module):
         for i in range(0, len(self.layer4)):
             x, a[f'layer4_{i}'] = self.layer4[i](x)
         x = self.maxpool(x)
-        a['maxpool'] = x
+        a['maxpool'] = x.cpu().detach().numpy()
         x = torch.flatten(x, 1)
         # a['flatten'] = x
         x = self.fc(x)
         # a['fc'] = x
         x = self.relufc(x)
-        a['relufc'] = x
+        a['relufc'] = x.cpu().detach().numpy()
         return x, a
 
     def forward(self, x):
